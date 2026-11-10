@@ -219,3 +219,70 @@ test('转账校验：转出与转入不能相同', async () => {
   assert.equal([...app.cache.values()].length, before, '同账户转账不该被保存');
   assert.ok(app.draft, '校验失败时草稿应保留');
 });
+
+/* ------------------------------------------------------------------ */
+/* 标签配对检查：界面是手写模板字符串拼的，少一个 </div> 不会报错，       */
+/* 但会让页面结构错乱（长辈手机上尤其明显），所以逐页检查一下。          */
+/* ------------------------------------------------------------------ */
+
+const VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+]);
+
+function assertBalancedHtml(html, label) {
+  const stack = [];
+  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const closing = m[1] === '/';
+    const tag = m[2].toLowerCase();
+    const selfClosed = /\/\s*$/.test(m[3]);
+    if (VOID_TAGS.has(tag) || selfClosed) continue;
+    if (closing) {
+      const top = stack.pop();
+      assert.equal(top, tag, `${label}: </${tag}> 对不上，栈顶是 <${top}>`);
+    } else {
+      stack.push(tag);
+    }
+  }
+  assert.deepEqual(stack, [], `${label}: 有标签没闭合 → ${stack.join(' > ')}`);
+}
+
+test('每个页面的 HTML 标签都配对', async () => {
+  const { app, root } = await boot();
+
+  for (const tab of ['record', 'list', 'stats', 'me']) {
+    app.tab = tab;
+    if (tab === 'list' || tab === 'stats') await app.refreshData();
+    if (tab === 'me') await app.ensureFullHistory();
+    app.render();
+    assertBalancedHtml(root.innerHTML, `${tab} 页`);
+  }
+
+  // 草稿卡（普通收入、转账两套分支）
+  await app.doParse('今天买菜35元');
+  assertBalancedHtml(root.innerHTML, '普通草稿');
+  app.draft = null;
+  await app.doParse('从银行卡转账500到微信');
+  assertBalancedHtml(root.innerHTML, '转账草稿');
+
+  // 报销回款草稿
+  app.draft = null;
+  await app.doParse('报销回来60元');
+  assertBalancedHtml(root.innerHTML, '报销草稿');
+
+  // 未登录 / 未入家庭 两个前置页（演示模式下状态存在 store.db 里）
+  app.draft = null;
+  const db = app.store.db;
+  const savedSession = db.session;
+  const savedProfile = db.profile;
+  db.session = null;
+  app.render();
+  assertBalancedHtml(root.innerHTML, '登录页');
+  db.session = savedSession;
+  db.profile = { ...savedProfile, family_id: null };
+  app.render();
+  assertBalancedHtml(root.innerHTML, '建家页');
+  db.profile = savedProfile;
+});

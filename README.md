@@ -41,7 +41,20 @@ supabase/validate-schema.mjs  用真 Postgres 验证 schema 的可选脚本
 test/                   Node 单元测试（无需安装依赖）
 tools/serve.js          本地预览服务器
 tools/check-config.js   上线自检：填完配置跑一下，逐条告诉你哪里没弄好
+tools/check-assets.js   部署前资源检查：大小写、缺失文件、裸导入
 ```
+
+---
+
+## 推送前跑两个检查
+
+```bash
+node tools/check-config.js    # Supabase 那边：地址/key/表/行级权限/函数/注册
+node tools/check-assets.js    # 这边：文件都在、大小写对、没有 Node 专有 API
+```
+
+第二个专治「本地能开、Pages 白屏」：Windows 不区分大小写，GitHub Pages 是 Linux。
+`import './Utils.js'` 在你电脑上跑得好好的，推上去就是 404 白屏。
 
 ---
 
@@ -77,10 +90,10 @@ node test/analytics.test.mjs  # 统计聚合与分类趋势 12 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
 node test/remote.test.mjs     # Supabase 请求构造（离线假 fetch）8 项
 node test/check.test.mjs      # 上线自检的判断逻辑 9 项
-node test/ui.test.mjs         # 界面渲染与业务闭环 11 项
+node test/ui.test.mjs         # 界面渲染、业务闭环、HTML 标签配对 12 项
 ```
 
-共 64 项，全部离线可跑，不需要真实 Supabase 项目。
+共 65 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 改了数据库结构怎么验
 

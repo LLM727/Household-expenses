@@ -99,6 +99,15 @@ node tools/check-config.js
 
 全绿就可以往下走了。这个脚本只读，不会写任何数据、也不会建账号。
 
+再跑一句资源检查（10 秒），专治「本地能开、Pages 白屏」：
+
+```bash
+node tools/check-assets.js
+```
+
+它会确认所有引用的文件和 import 都真实存在，而且**大小写完全一致**——Windows 不区分大小写，GitHub Pages 是 Linux，
+`Utils.js` 写成 `utils.js` 在你电脑上没事，推上去就白屏。这一句能提前 15 分钟发现它。
+
 ---
 
 ## 第 6 步：推到 GitHub
