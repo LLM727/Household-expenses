@@ -39,6 +39,7 @@ src/
 supabase/schema.sql     数据库结构（表 + 行级权限 + 邀请码函数）
 supabase/validate-schema.mjs  用真 Postgres 验证 schema 的可选脚本
 test/                   Node 单元测试（无需安装依赖）
+test/e2e/               端到端：真 Postgres 上跑真实数据层（需临时装 PGlite）
 tools/serve.js          本地预览服务器
 tools/check-config.js   上线自检：填完配置跑一下，逐条告诉你哪里没弄好
 tools/check-assets.js   部署前资源检查：大小写、缺失文件、裸导入
@@ -88,12 +89,12 @@ npm test
 node test/parse.test.mjs      # 自然语言解析 16 项
 node test/analytics.test.mjs  # 统计聚合与分类趋势 12 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
-node test/remote.test.mjs     # Supabase 请求构造（离线假 fetch）8 项
+node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致性 9 项
 node test/check.test.mjs      # 上线自检的判断逻辑 9 项
 node test/ui.test.mjs         # 界面渲染、业务闭环、标签配对、交互接线 14 项
 ```
 
-共 67 项，全部离线可跑，不需要真实 Supabase 项目。
+共 68 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 改了数据库结构怎么验
 
@@ -107,6 +108,26 @@ node supabase/validate-schema.mjs
 
 当前 15 项全过，覆盖「外人读不到别人家的账」「伪造 family_id 写入被挡」「匿名读不到任何家庭」
 「同月预算不能重复」等。平时不用跑，改完 SQL 再跑一次就行。
+
+## 端到端：让真实代码跑在真 Postgres 上
+
+`test/e2e/` 里有个「假 Supabase」：用 PGlite 跑真 schema.sql，再用 Node 内置 http 复刻
+Supabase 用到的三条路径（注册登录、表的增删改查、RPC）。这样 `src/store.js` 的 RemoteStore
+和 `src/supabase.js` 是**原封不动地**跑在真 SQL 上，而不是对着假 fetch 猜。
+
+```bash
+npm i --no-save @electric-sql/pglite
+npm run test:e2e
+```
+
+12 项，覆盖建家→默认分类与账户、按月区间查询、改/删、转账双账户、预算覆盖与清零、
+自定义分类、邀请码加入、错码被拒、外人读不到、两个家庭互相隔开、越家改 family_id 被挡、
+刷新后登录态仍在。
+
+**这套测试抓到过一个致命 bug**：建家时往 `accounts` 写了不存在的 `sort` 列，
+真实 Supabase 会整批拒绝——等于「新用户第一次建家必然失败」。假 fetch 什么都收，永远发现不了。
+现在 `test/remote.test.mjs` 会从 schema.sql 里读出每张表的列名，逐条比对写入字段，
+这类错误在离线测试阶段就会拦下来。
 
 ---
 

@@ -6,8 +6,35 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { SupabaseClient, SupabaseError } from '../src/supabase.js';
 import { RemoteStore } from '../src/store.js';
+
+/**
+ * 从 schema.sql 里抽出每张表的列名。
+ * 用途：校验所有发往 PostgREST 的写入体里，字段名都是表上真实存在的列。
+ * 这一条是补上来的——曾经往 accounts 写了不存在的 sort 列，
+ * PostgREST 会整批拒绝，等于「第一次建家必然失败」，而假的 fetch 什么都收，查不出来。
+ */
+function tableColumnsFromSchema() {
+  const sql = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+  const NOT_A_COLUMN = new Set(['primary', 'unique', 'constraint', 'check', 'foreign', 'exclude']);
+  const tables = new Map();
+  for (const m of sql.matchAll(/create table if not exists public\.(\w+)\s*\(([\s\S]*?)\n\);/g)) {
+    const columns = new Set();
+    for (const line of m[2].split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('--')) continue;
+      const name = trimmed.split(/[\s,]+/)[0].toLowerCase();
+      if (!/^[a-z_][a-z0-9_]*$/.test(name) || NOT_A_COLUMN.has(name)) continue;
+      columns.add(name);
+    }
+    tables.set(m[1].toLowerCase(), columns);
+  }
+  return tables;
+}
+
+const SCHEMA_COLUMNS = tableColumnsFromSchema();
 
 class MemStorage {
   constructor() {
@@ -51,6 +78,18 @@ function makeFetch(handler) {
       body: init.body ? JSON.parse(init.body) : undefined,
     };
     calls.push(record);
+
+    // 写入体的字段名必须是表上真实存在的列
+    const tableMatch = record.path.match(/^\/rest\/v1\/([a-z_][a-z0-9_]*)$/i);
+    if (tableMatch && SCHEMA_COLUMNS.has(tableMatch[1].toLowerCase())
+        && (record.method === 'POST' || record.method === 'PATCH')) {
+      const columns = SCHEMA_COLUMNS.get(tableMatch[1].toLowerCase());
+      const rows = Array.isArray(record.body) ? record.body : [record.body];
+      record.unknownColumns = rows
+        .flatMap((row) => Object.keys(row || {}))
+        .filter((key) => !columns.has(key.toLowerCase()));
+    }
+
     const result = handler(record, calls);
     if (result instanceof Error) throw result;
     return result ?? jsonResponse(200, null);
@@ -250,4 +289,53 @@ test('RemoteStore：加入家庭用邀请码，走 RPC 而不是直接写表', a
   assert.ok(rpcCall, '没有调用 join_family_by_code');
   assert.deepEqual(rpcCall.body, { p_code: 'qqq222', p_display_name: '妈妈', p_role: 'mother' });
   assert.equal(family.id, 'fam-9');
+});
+
+test('写库字段名都出自 schema.sql（列名写错会被这里抓到）', async () => {
+  let seq = 0;
+  const f = makeFetch((rec) => {
+    if (rec.path === '/auth/v1/signup') return jsonResponse(200, authPayload);
+    if (rec.path === '/rest/v1/rpc/create_family') {
+      // PostgREST 对复合返回类型给的是对象，不是数组（真实行为）
+      return jsonResponse(200, { id: 'fam-1', name: '我的家', invite_code: 'K3M9QP' });
+    }
+    if (rec.path === '/rest/v1/categories' && rec.method === 'POST') {
+      const rows = Array.isArray(rec.body) ? rec.body : [rec.body];
+      return jsonResponse(201, rows.map((row) => ({ ...row, id: `cat-${seq++}` })));
+    }
+    if (rec.path === '/rest/v1/accounts' && rec.method === 'POST') return jsonResponse(201, []);
+    if (rec.path === '/rest/v1/members' && rec.method === 'GET') {
+      return jsonResponse(200, [{ id: 'user-1', family_id: 'fam-1', display_name: '爸爸', role: 'father' }]);
+    }
+    if (rec.path === '/rest/v1/families' && rec.method === 'GET') {
+      return jsonResponse(200, [{ id: 'fam-1', name: '我的家', invite_code: 'K3M9QP' }]);
+    }
+    if (rec.path === '/rest/v1/transactions') {
+      return jsonResponse(201, [{ id: 'tx-1', ...(rec.body || {}) }]);
+    }
+    if (rec.path === '/rest/v1/budgets') {
+      return rec.method === 'DELETE' ? jsonResponse(204) : jsonResponse(201, [{ id: 'bud-1', ...rec.body }]);
+    }
+    return jsonResponse(200, []);
+  });
+  globalThis.fetch = f;
+
+  const store = new RemoteStore({ url: URL_BASE, anonKey: KEY, storage: new MemStorage() });
+  await store.signUp('a@b.com', 'pw123456', '爸爸');
+  await store.createFamily('我的家', '爸爸', 'father');
+  await store.addTransaction({ kind: 'expense', amount: 10, occurred_on: '2026-11-01', note: '测试' });
+  await store.saveBudget('2026-11', null, 3000);
+  await store.addCategory({ name: '宠物', kind: 'expense', keywords: ['狗粮'] });
+  await store.updateProfile({ display_name: '老爸', role: 'father' });
+  await store.updateFamily({ name: '新家名' });
+
+  const offenders = f.calls
+    .filter((c) => c.unknownColumns && c.unknownColumns.length)
+    .map((c) => `${c.method} ${c.path} → 不存在的列：${c.unknownColumns.join(', ')}`);
+  assert.deepEqual(offenders, [], `这些字段在 schema.sql 里没有，真实 Supabase 会整批拒绝：\n${offenders.join('\n')}`);
+
+  assert.ok(
+    f.calls.some((c) => c.path === '/rest/v1/accounts' && c.method === 'POST'),
+    '没跑到默认账户写入，这个测试白跑了',
+  );
 });

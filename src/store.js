@@ -41,13 +41,14 @@ function categoryRowsForSeed(familyId) {
 }
 
 function accountRowsForSeed(familyId) {
-  return DEFAULT_ACCOUNTS.map((a, i) => ({
+  // 注意：accounts 表没有 sort 列（顺序靠 created_at），不要往这里塞多余字段，
+  // 否则 PostgREST 会以 "column sort of relation accounts does not exist" 整批拒绝。
+  return DEFAULT_ACCOUNTS.map((a) => ({
     family_id: familyId,
     name: a.name,
     kind: a.kind,
     initial_balance: 0,
     archived: false,
-    sort: i,
   }));
 }
 
