@@ -37,6 +37,7 @@ src/
   utils.js              日期/金额/字符串工具
 
 supabase/schema.sql     数据库结构（表 + 行级权限 + 邀请码函数）
+supabase/validate-schema.mjs  用真 Postgres 验证 schema 的可选脚本
 test/                   Node 单元测试（无需安装依赖）
 tools/serve.js          本地预览服务器
 tools/check-config.js   上线自检：填完配置跑一下，逐条告诉你哪里没弄好
@@ -80,6 +81,19 @@ node test/ui.test.mjs         # 界面渲染与业务闭环 11 项
 ```
 
 共 64 项，全部离线可跑，不需要真实 Supabase 项目。
+
+## 改了数据库结构怎么验
+
+`supabase/schema.sql` 有个用真 Postgres（PGlite，跑在 WASM 里）的验证脚本，会伪造 Supabase 的
+`auth.users` / `auth.uid()` / `anon` 角色，然后把建家、邀请码入家、行级权限、触发器逐项断言一遍：
+
+```bash
+npm i --no-save @electric-sql/pglite    # 只是本地临时装，不进 package.json
+node supabase/validate-schema.mjs
+```
+
+当前 15 项全过，覆盖「外人读不到别人家的账」「伪造 family_id 写入被挡」「匿名读不到任何家庭」
+「同月预算不能重复」等。平时不用跑，改完 SQL 再跑一次就行。
 
 ---
 
