@@ -67,7 +67,7 @@ export const DEFAULT_CATEGORIES = [
     children: [
       { key: 'shopping-daily', name: '日用百货', keywords: ['日用品', '纸巾', '洗衣液', '牙膏', '毛巾', '垃圾袋', '洗发水', '沐浴露', '清洁', '超市', '化妆品', '护肤品', '洗面奶'] },
       { key: 'shopping-clothes', name: '服饰鞋帽', keywords: ['衣服', '鞋', '裤子', '裙子', '外套', '内衣', '袜子', '帽子', '包包'] },
-      { key: 'shopping-digital', name: '数码家电', keywords: ['手机', '电脑', '家电', '冰箱', '洗衣机', '空调', '耳机', '相机', '电视', '充电器'] },
+      { key: 'shopping-digital', name: '数码家电', keywords: ['手机', '电脑', '家电', '冰箱', '洗衣机', '空调', '耳机', '相机', '电视', '充电器', '电饭锅', '微波炉', '电风扇', '热水器', '显示器', '键盘', '鼠标'] },
       { key: 'shopping-baby', name: '母婴用品', keywords: ['奶粉', '尿布', '尿不湿', '玩具', '母婴', '婴儿'] },
     ],
   },

@@ -44,6 +44,12 @@ test('中文数字转换', () => {
   assert.equal(cnToNumber('一百五'), 150);
   assert.equal(cnToNumber('三千'), 3000);
   assert.equal(cnToNumber('一万二'), 12000);
+  // 下面这几条曾经都算错：百位后面跟十位会被当成「省略写法」
+  assert.equal(cnToNumber('二百六十八'), 268);
+  assert.equal(cnToNumber('两百三十五'), 235);
+  assert.equal(cnToNumber('三百五'), 350);
+  assert.equal(cnToNumber('一千零五'), 1005);
+  assert.equal(cnToNumber('两万三'), 23000);
 });
 
 test('金额提取：带单位优先，跳过日期数字', () => {
@@ -200,4 +206,39 @@ test('日常账单能自动落到二级分类', () => {
 test('「还钱」不知道谁还谁时要提示核对，而不是默默猜', () => {
   const r = parseEntry('朋友还钱 2000', ctx);
   assert.ok(r.warnings.some((w) => w.includes('谁还谁')), r.warnings.join(' | '));
+});
+
+/* ---- 语音输入：说出来常常是中文数字、没标点、带空格 ---- */
+
+test('语音里不带「元/块」的中文数字也认', () => {
+  assert.equal(parseEntry('昨天 加油 三百', ctx).amount, 300);
+  assert.equal(parseEntry('给娃 交了 学费 八千', ctx).amount, 8000);
+  assert.equal(parseEntry('一共两百', ctx).amount, 200);
+  assert.equal(parseEntry('花了 三百五', ctx).amount, 350);
+});
+
+test('量词里的数字不算金额（两个人、十分钟、一斤苹果）', () => {
+  assert.equal(parseEntry('等了 十分钟', ctx).amount, null);
+  assert.equal(parseEntry('两个人 吃饭', ctx).amount, null);
+  assert.equal(parseEntry('买了一斤苹果', ctx).amount, null);
+});
+
+test('口语小数：35块5 是 35.5，不是 35', () => {
+  assert.equal(parseEntry('打车 三十八块五', ctx).amount, 38.5);
+  assert.equal(parseEntry('买菜三十五块五毛', ctx).amount, 35.5);
+  assert.equal(parseEntry('妈妈 买的 水果 四十二块八', ctx).amount, 42.8);
+  assert.equal(parseEntry('买了个电饭锅 199 块6', ctx).amount, 199.6);
+});
+
+test('说「一万二」是一万二，不是一万零二', () => {
+  const r = parseEntry('工资 一万二', ctx);
+  assert.equal(r.amount, 12000);
+  assert.equal(r.kind, 'income');
+});
+
+test('单字分类词不会撞进别的词里', () => {
+  // 「电饭锅」里的「饭」不该被当成餐饮
+  assert.equal(parseEntry('买了个电饭锅 199 块', ctx).categoryFullName, '购物/数码家电');
+  // 但「午饭」里的「饭」在词尾，仍然算餐饮
+  assert.equal(parseEntry('午饭 25', ctx).categoryName, '餐饮');
 });

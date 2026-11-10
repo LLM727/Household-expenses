@@ -43,11 +43,13 @@ function normalize(text) {
 
 /** 中文数字转阿拉伯数字，支持 三十 / 一百五 / 三千 / 一万二 等常见写法 */
 export function cnToNumber(str) {
+  const chars = Array.from(String(str || ''));
   let total = 0;
   let section = 0;
   let number = 0;
   let last = 0; // 记录上一位单位，用于「一万二」= 12000 这类省略
-  for (const ch of str) {
+  chars.forEach((ch, i) => {
+    const isLast = i === chars.length - 1;
     if (ch === '万') {
       section = (section + number) * 10000;
       total += section;
@@ -67,16 +69,26 @@ export function cnToNumber(str) {
       number = 0;
       last = 10;
     } else if (ch in CN_DIGITS) {
-      if (last >= 100 && number === 0) {
-        // 「一万二」=> 12000：省略单位时按上一位单位折算
+      // 「一万二」= 12000、「三百五」= 350：只有这个数字是整串的**最后一个字**时，
+      // 才按上一位单位折算。否则「二百六十八」的「六」会被当成省略写法，算成 278。
+      if (last >= 100 && number === 0 && isLast) {
         section += CN_DIGITS[ch] * (last / 10);
       } else {
         number = CN_DIGITS[ch];
       }
       last = 0;
     }
-  }
+  });
   return total + section + number;
+}
+
+const CJK_RE = /[\u4e00-\u9fa5]/;
+
+/** 这一格是不是被汉字夹在中间（单字关键词靠它判断自己是不是一个独立的词） */
+function inMiddleOfWord(text, idx) {
+  const before = idx > 0 ? text[idx - 1] : '';
+  const after = idx + 1 < text.length ? text[idx + 1] : '';
+  return CJK_RE.test(before) && CJK_RE.test(after);
 }
 
 function maskSpans(text, spans) {
@@ -212,12 +224,29 @@ export function extractDate(text, todayISO) {
 
 const AMOUNT_RE = /(\d+(?:\.\d+)?)\s*(万|千|w|W|k|K)?\s*(元|块钱|块|圆|人民币|rmb|RMB|¥|￥)?/g;
 
-/** 把「三十块」这类中文数字先转成阿拉伯数字，仅处理后面跟货币单位的 */
+const CN_NUM_CHARS = '零〇一幺二两三四五六七八九十百千万';
+
+/** 把「三十五块」「两百」这类中文数字先转成阿拉伯数字（含口语里的小数：35块5 = 35.5） */
 function normalizeChineseAmounts(text) {
-  return text.replace(/([零〇一幺二两三四五六七八九十百千万]+)\s*(元|块钱|块|圆|人民币|¥|￥)/g, (whole, cn) => {
-    const num = cnToNumber(cn);
-    return Number.isFinite(num) && num > 0 ? String(num) + whole.slice(cn.length) : whole;
-  });
+  return (
+    text
+      // 「三十五块五」「四十二块八毛」：单位后面跟一个数字，是「角」
+      .replace(
+        new RegExp(`([${CN_NUM_CHARS}]+)\\s*(元|块钱|块|圆|人民币|¥|￥)\\s*([一二三四五六七八九])\\s*([毛角])?`, 'g'),
+        (whole, cn, _unit, frac) => {
+          const num = cnToNumber(cn);
+          if (!Number.isFinite(num) || num <= 0) return whole;
+          return `${num}.${CN_DIGITS[frac]}`;
+        },
+      )
+      // 阿拉伯数字也一样：「199块6」= 199.6
+      .replace(/(\d+)\s*(元|块钱|块|圆)\s*([1-9])\s*([毛角])?(?!\d)/g, (whole, num, _unit, frac) => `${num}.${frac}`)
+      // 普通的中文数字 + 单位
+      .replace(new RegExp(`([${CN_NUM_CHARS}]+)\\s*(元|块钱|块|圆|人民币|¥|￥)`, 'g'), (whole, cn) => {
+        const num = cnToNumber(cn);
+        return Number.isFinite(num) && num > 0 ? String(num) + whole.slice(cn.length) : whole;
+      })
+  );
 }
 
 /**
@@ -240,6 +269,25 @@ export function extractAmount(text) {
       span: [m.index, m.index + m[0].length],
       source: m[0].trim(),
     });
+  }
+  if (!candidates.length) {
+    // 语音里常见「昨天加油三百」——不带「元/块」的中文数字。
+    // 排除「两个」「十点」「三斤」这类量词和时间说法，免得把数量当金额。
+    const CN_AMOUNT_RE = new RegExp(
+      `([${CN_NUM_CHARS}]{1,8})(?![月日号点岁个斤两人次天年分时秒成倍折共双件只条瓶袋盒张本包桶箱支根套辆台部位篇章])`,
+      'g',
+    );
+    let cm;
+    while ((cm = CN_AMOUNT_RE.exec(text)) !== null) {
+      const value = cnToNumber(cm[1]);
+      if (!Number.isFinite(value) || value <= 0 || value >= 1e8) continue;
+      candidates.push({
+        value: Math.round(value * 100) / 100,
+        hasCurrency: false,
+        span: [cm.index, cm.index + cm[1].length],
+        source: cm[1],
+      });
+    }
   }
   if (!candidates.length) return null;
 
@@ -310,12 +358,19 @@ export function matchCategory(text, categories, kind) {
   for (const cat of usable) {
     const names = [cat.name, ...(cat.keywords || [])].filter(Boolean);
     for (const kw of names) {
-      const idx = text.indexOf(kw);
-      if (idx < 0) continue;
-      // 词越长越可信；同长度时小类（有 parent_id）优先
-      const score = kw.length * 10 + (cat.parent_id ? 3 : 0);
-      if (!best || score > best.score) {
-        best = { cat, score, kw, idx };
+      let from = 0;
+      let idx = text.indexOf(kw, from);
+      while (idx >= 0) {
+        // 单字关键词（买、饭）太容易撞进别的词里：「电饭锅」的「饭」会被认成餐饮。
+        // 要求它别被汉字夹在中间（词首、词尾都算命中）。
+        if (!(kw.length === 1 && inMiddleOfWord(text, idx))) {
+          // 词越长越可信；同长度时小类（有 parent_id）优先
+          const score = kw.length * 10 + (cat.parent_id ? 3 : 0);
+          if (!best || score > best.score) best = { cat, score, kw, idx };
+          break;
+        }
+        from = idx + 1;
+        idx = text.indexOf(kw, from);
       }
     }
   }
