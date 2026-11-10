@@ -156,3 +156,37 @@ test('退出登录：界面立刻回到登录页，账目不再显示', async ()
   assert.ok(!root.has('买菜'), '退出后屏幕上不该还留着账目');
   assert.equal(app.cache.size, 0, '本地缓存没清空');
 });
+
+test('补录到别的月份：保存后视图跟过去，流水里立刻能看到', async () => {
+  const { app, root } = await bootReadyFamily('backdate@test.com');
+  const before = app.month;
+
+  // 算一个「往前两个月」的日期，不依赖当天是哪天
+  const [y, m] = before.split('-').map(Number);
+  const d = new Date(y, m - 3, 15);
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-15`;
+  const targetMonth = iso.slice(0, 7);
+  assert.notEqual(targetMonth, before);
+
+  await app.doParse('买菜120元');
+  app.draft.occurredOn = iso; // 手动改日期，模拟补录
+  await app.saveDraft();
+
+  assert.equal(app.month, targetMonth, '保存后视图没切到补录的那个月，用户会以为没记上');
+  assert.match(app.toastMsg, /记在/, `提示没说清记到哪个月：${app.toastMsg}`);
+
+  app.tab = 'list';
+  app.render();
+  assert.ok(root.has('买菜'), '流水里看不到刚补录的账');
+  assert.ok(root.has('120'), '金额没显示出来');
+});
+
+test('记当月的账：视图不跳，别打扰正在看的月份', async () => {
+  const { app } = await bootReadyFamily('same-month@test.com');
+  const before = app.month;
+  await app.doParse('今天买菜35.5元');
+  assert.equal(app.draft.occurredOn.slice(0, 7), before, '解析出的日期不在当月，测试前提不成立');
+  await app.saveDraft();
+  assert.equal(app.month, before, '记当月的账不该切月份');
+  assert.equal(app.toastMsg, '记好了');
+});

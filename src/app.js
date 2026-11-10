@@ -495,8 +495,13 @@ class App {
       this.draft = null;
       this.editing = null;
       this.rawText = '';
+      // 补录到别的月份时，把视图切到那个月。
+      // 否则用户记完去「流水」一看没有，会以为没记上（其实记在上个月，只是当前看的是这个月）。
+      const savedMonth = String(payload.occurred_on).slice(0, 7);
+      const moved = savedMonth !== this.month;
+      if (moved) this.month = savedMonth;
       await this.refreshData();
-      this.showToast('记好了');
+      this.showToast(moved ? `记好了，记在 ${savedMonth}` : '记好了');
     } catch (err) {
       this.showToast(this._friendly(err));
     } finally {
