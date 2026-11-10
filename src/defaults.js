@@ -48,7 +48,7 @@ export const DEFAULT_CATEGORIES = [
     keywords: ['吃饭', '吃', '餐', '饭'],
     children: [
       { key: 'food-market', name: '买菜', keywords: ['买菜', '菜市场', '买菜做饭', '蔬菜', '水果', '猪肉', '排骨', '鸡蛋', '生鲜', '肉'] },
-      { key: 'food-out', name: '在外吃饭', keywords: ['外卖', '饭店', '餐厅', '火锅', '烧烤', '聚餐', '食堂', '咖啡', '奶茶', '早餐店', '面馆', '请客'] },
+      { key: 'food-out', name: '在外吃饭', keywords: ['外卖', '饭店', '餐厅', '火锅', '烧烤', '聚餐', '食堂', '咖啡', '奶茶', '早餐店', '面馆', '请客', '早点', '早饭', '早餐', '夜宵'] },
       { key: 'food-snack', name: '零食饮料', keywords: ['零食', '饮料', '薯片', '巧克力', '冰淇淋', '雪糕', '蛋糕', '面包'] },
     ],
   },
@@ -65,7 +65,7 @@ export const DEFAULT_CATEGORIES = [
     key: 'shopping', name: '购物', kind: 'expense', icon: '🛒',
     keywords: ['买', '购'],
     children: [
-      { key: 'shopping-daily', name: '日用百货', keywords: ['日用品', '纸巾', '洗衣液', '牙膏', '毛巾', '垃圾袋', '洗发水', '沐浴露', '清洁'] },
+      { key: 'shopping-daily', name: '日用百货', keywords: ['日用品', '纸巾', '洗衣液', '牙膏', '毛巾', '垃圾袋', '洗发水', '沐浴露', '清洁', '超市', '化妆品', '护肤品', '洗面奶'] },
       { key: 'shopping-clothes', name: '服饰鞋帽', keywords: ['衣服', '鞋', '裤子', '裙子', '外套', '内衣', '袜子', '帽子', '包包'] },
       { key: 'shopping-digital', name: '数码家电', keywords: ['手机', '电脑', '家电', '冰箱', '洗衣机', '空调', '耳机', '相机', '电视', '充电器'] },
       { key: 'shopping-baby', name: '母婴用品', keywords: ['奶粉', '尿布', '尿不湿', '玩具', '母婴', '婴儿'] },

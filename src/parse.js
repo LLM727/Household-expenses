@@ -135,7 +135,51 @@ export function extractDate(text, todayISO) {
     }
   }
 
-  // 3) 相对日期
+  // 2.5) 上个月8号 / 上月8号 —— 补录时最常这么说。
+  // 必须排在「只有8号」前面，否则会被当成当前月的 8 号，账就记到错月份去了。
+  m = text.match(/(上上个月|上个月|上月)\s*(\d{1,2})\s*[日号]/);
+  if (m) {
+    const monthsBack = m[1] === '上上个月' ? 2 : 1;
+    const day = Number(m[2]);
+    if (day >= 1 && day <= 31) {
+      const targetMonth = today.getMonth() - monthsBack;
+      const lastDay = new Date(today.getFullYear(), targetMonth + 1, 0).getDate();
+      const d = new Date(today.getFullYear(), targetMonth, Math.min(day, lastDay));
+      if (!Number.isNaN(d.getTime())) {
+        return { date: toISODate(d), span: [m.index, m.index + m[0].length], source: m[0] };
+      }
+    }
+  }
+
+  // 3) 9.5号 / 9/5号 —— 「月.日」的简写（先说月份，否则会被下面的「5号」抢走，记成当月）
+  m = text.match(/(\d{1,2})\s*[./]\s*(\d{1,2})\s*[日号]/);
+  if (m) {
+    const month = Number(m[1]);
+    const day = Number(m[2]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      let d = new Date(today.getFullYear(), month - 1, day);
+      if (d.getTime() > today.getTime()) d = new Date(today.getFullYear() - 1, month - 1, day);
+      if (!Number.isNaN(d.getTime())) {
+        return { date: toISODate(d), span: [m.index, m.index + m[0].length], source: m[0] };
+      }
+    }
+  }
+
+  // 4) 上周三 / 这周五 / 星期天 —— 星期几的说法
+  m = text.match(/(上上|上个|上|这|本)?(?:周|星期|礼拜)([一二三四五六日天])/);
+  if (m) {
+    const target = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 }[m[2]];
+    const prefix = m[1] || '';
+    const weeksBack = prefix === '上上' ? 2 : prefix === '上' || prefix === '上个' ? 1 : 0;
+    const diff = (today.getDay() - target + 7) % 7; // 本周的这一天往前数几天
+    return {
+      date: addDays(todayISO, -(diff + weeksBack * 7)),
+      span: [m.index, m.index + m[0].length],
+      source: m[0],
+    };
+  }
+
+  // 5) 相对日期
   for (const [word, delta] of REL_DAYS) {
     const idx = text.indexOf(word);
     if (idx >= 0) {
@@ -143,7 +187,7 @@ export function extractDate(text, todayISO) {
     }
   }
 
-  // 4) 只有「8号」这种
+  // 6) 只有「8号」这种
   m = text.match(/(?:^|[^\d])(\d{1,2})\s*[日号]/);
   if (m) {
     const day = Number(m[1]);
@@ -215,17 +259,34 @@ export function extractAmount(text) {
  * 顺序有意义：先判特殊类型（转账/借还/报销），再判收入，最后默认支出。
  */
 const KIND_RULES = [
-  { kind: 'transfer', re: /(转账|转入|转出|转到|转给|提现|充值|存到|取现|零钱通)/ },
-  { kind: 'lend_return', re: /(收回借款|还给我|还款给我|把钱还我|回来了钱)/ },
+  {
+    // 账户之间的挪动（不算收支）。除了「转账」这类明说的词，
+    // 还要认「银行卡转支付宝」「从银行卡取500现金」这种口语说法——
+    // 认成支出的话，家庭总支出会凭空多出一笔。
+    kind: 'transfer',
+    re: /(转账|转入|转出|转到|转给|提现|充值|存到|取现|零钱通|银行卡.{0,6}转|转.{0,6}(支付宝|微信|银行卡|余额宝|信用卡)|取.{0,4}现金|存.{0,4}现金)/,
+  },
+  {
+    // 别人还我钱（收回借出的）。要排在「借出」和「还钱」前面：
+    // 「妈妈还我200」= 她还我，不是我又借出、也不是我支出。
+    kind: 'lend_return',
+    re: /(收回借出|收回借款|收回借|还我|还给我|把钱还我|借款回来了|钱收回来了)/,
+  },
   { kind: 'lend', re: /(借给|借出|借钱给|借了.{0,8}给)/ },
-  { kind: 'borrow_return', re: /(归还借款|还了钱|还钱|还款|还清)/ },
+  {
+    // 我还别人钱（归还借入）。「我还妈妈150」「还给妈妈」都算——
+    // 这不是消费，记成支出会让当月支出虚高。
+    kind: 'borrow_return',
+    // 「我还妈妈150」是归还；但「我还剩200」不是在还钱，所以排除「剩/有」
+    re: /(归还|还给|我还(?![剩有])|还钱|还款|还清|还了钱)/,
+  },
   { kind: 'borrow', re: /((向|跟|找).{0,8}借|借入|借了|借来)/ },
   { kind: 'reimburse_back', re: /(报销回来|报销回款|报销到账|报销退了|报销给我|报回来了)/ },
   { kind: 'income', re: /(收到|收入|进账|入账|发工资|发了工资|工资|薪水|奖金|年终奖|提成|绩效|补贴|津贴|利息|分红|收益|红包|压岁钱|赚了|返现|退款)/ },
 ];
 
 /** 垫付（属于支出，但标记可报销） */
-const REIMBURSE_CLAIM_RE = /(垫付|先垫|报销用|要报销|可以报销)/;
+const REIMBURSE_CLAIM_RE = /(垫付|先垫|报销用|要报销|可以报销|可报销|报销)/;
 
 export function detectKind(text) {
   for (const rule of KIND_RULES) {
@@ -356,6 +417,9 @@ function buildNote(text, spans) {
   rest = rest.replace(/\s+/g, ' ').trim();
   rest = rest.replace(/^(了|的|在|于|给|把|和|跟)+\s*/g, '').trim();
   rest = rest.replace(/\s*(了|的)$/g, '').trim();
+  // 关键词抠完剩下的单字基本都是噪声：「交电费」剩「交」、「充话费」剩「充」、
+  // 「买衣服」剩「买」。与其在流水里显示一个孤零零的字，不如留空。
+  if (rest.length === 1 && /[\u4e00-\u9fa5]/.test(rest)) rest = '';
   return rest.slice(0, 80);
 }
 
@@ -404,9 +468,16 @@ export function parseEntry(raw, ctx = {}) {
   const isSpecial = !KIND_MAP[kind]?.counted;
   const catHit = isSpecial ? null : matchCategory(maskSpans(text, dateSpans), categories, kind);
 
-  const spans = [dateHit?.span, amountHit?.span, memberHit?.span, kindHit?.span, catHit?.span,
+  // 单字的分类关键词（比如「买」「饭」）只用来判类别，不要从备注里抠掉：
+  // 一抠就把词切碎了——「午饭 25」的备注变成「午」，「买菜 35.5」变成「菜」。
+  const catSpan = catHit && (catHit.source || '').length > 1 ? catHit.span : null;
+  const spans = [dateHit?.span, amountHit?.span, memberHit?.span, kindHit?.span, catSpan,
     ...(accHit?.spans || [])];
   const note = buildNote(text, spans);
+
+  // 「报销」既可能是垫付待报销（支出），也可能是报销回款（抵支出）。
+  // 只有前者才标记「可报销」；已经是 reimburse_back 的就别再标一遍。
+  const claimHit = kind !== 'reimburse_back' && REIMBURSE_CLAIM_RE.test(text);
 
   if (!amountHit) warnings.push('没识别到金额，请手动填写');
   if (amountHit?.ambiguous) warnings.push('识别到多个金额，已取最大的一个，请核对');
@@ -414,7 +485,12 @@ export function parseEntry(raw, ctx = {}) {
   if (kind === 'expense' && !catHit) warnings.push('没识别到分类，已归到「其他支出」，可手动改');
   if (isSpecial) warnings.push(`${KIND_MAP[kind]?.name || kind}不计入家庭收支合计，只调整账户余额`);
   if (kind === 'transfer' && !accHit) warnings.push('没认出转出/转入账户，请手动选一下');
-  if (REIMBURSE_CLAIM_RE.test(text)) warnings.push('疑似垫付待报销，已标记「可报销」');
+  if (claimHit) warnings.push('疑似垫付待报销，已标记「可报销」');
+  // 光说「还钱」不知道是谁还谁：可能是别人还我（收回），也可能是我还别人（归还）。
+  // 方向反了不影响合计（借还款都不计入），但债权债务会记反，所以提示核对。
+  if (/^(还钱|还款|还了钱|还清)$/.test(kindHit.source || '')) {
+    warnings.push('「还钱」没说是谁还谁，请核对一下方向');
+  }
 
   let confidence = 0.35;
   if (amountHit) confidence += 0.25;
@@ -440,7 +516,7 @@ export function parseEntry(raw, ctx = {}) {
     fromAccountId: accHit?.fromAccountId || null,
     toAccountId: accHit?.toAccountId || null,
     note,
-    reimbursable: REIMBURSE_CLAIM_RE.test(text),
+    reimbursable: claimHit,
     confidence,
     warnings,
     matches: {

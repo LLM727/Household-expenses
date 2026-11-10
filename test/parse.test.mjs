@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseEntry, cnToNumber, extractAmount, extractDate } from '../src/parse.js';
-import { DEFAULT_CATEGORIES } from '../src/defaults.js';
+import { DEFAULT_CATEGORIES, DEFAULT_ACCOUNTS } from '../src/defaults.js';
 
 /** 把 defaults 里的树拍平成数据库里的行结构，模拟线上数据结构 */
 function flattenCategories() {
@@ -149,4 +149,55 @@ test('场景13：空输入不崩溃', () => {
   const r = parseEntry('   ', ctx);
   assert.equal(r.ok, false);
   assert.equal(r.amount, null);
+});
+
+/* ---- 一批「家里人真会说的话」回归：下面这些句子都曾经认错 ---- */
+
+test('借还款方向：还我 = 收回借款，我还 = 归还借款', () => {
+  assert.equal(parseEntry('妈妈还我200', ctx).kind, 'lend_return');
+  assert.equal(parseEntry('我还妈妈150', ctx).kind, 'borrow_return');
+  assert.equal(parseEntry('收回借出的1000', ctx).kind, 'lend_return');
+  assert.equal(parseEntry('借给妈妈500', ctx).kind, 'lend');
+  assert.equal(parseEntry('向爸爸借了300', ctx).kind, 'borrow');
+});
+
+test('账户之间挪钱不算支出：转账与取现', () => {
+  assert.equal(parseEntry('银行卡转支付宝 1000', ctx).kind, 'transfer');
+  assert.equal(parseEntry('从银行卡取500现金', ctx).kind, 'transfer');
+});
+
+test('口语日期：上周三 / 这周一 / 9.5号', () => {
+  assert.equal(parseEntry('上周三交物业费280', ctx).occurredOn, '2026-11-04');
+  assert.equal(parseEntry('这周一买菜30', ctx).occurredOn, '2026-11-09');
+  assert.equal(parseEntry('9.5号 早餐 12', ctx).occurredOn, '2026-09-05');
+});
+
+test('上月8号 / 上上个月5号：补录到正确的月份', () => {
+  assert.equal(parseEntry('上月8号交电费200', ctx).occurredOn, '2026-10-08');
+  assert.equal(parseEntry('上个月31号交电费200', ctx).occurredOn, '2026-10-31');
+  assert.equal(parseEntry('上上个月5号交电费200', ctx).occurredOn, '2026-09-05');
+  // 上个月只有 30 天时，31 号要夹到月末，不能滚到下个月
+  const dec = { ...ctx, today: '2026-12-05' };
+  assert.equal(parseEntry('上月31号交电费200', dec).occurredOn, '2026-11-30');
+});
+
+test('备注不会只剩半个词', () => {
+  assert.equal(parseEntry('交电费200', ctx).note, '');
+  assert.equal(parseEntry('给孩子买衣服 260', ctx).note, '');
+  const withAcc = { ...ctx, accounts: DEFAULT_ACCOUNTS }; // 带账户配置时「微信」会被当作支付方式摘掉
+  assert.equal(parseEntry('午饭 25 微信', withAcc).note, '午饭');
+  assert.equal(parseEntry('给小明买书 45', ctx).note, '买书');
+});
+
+test('日常账单能自动落到二级分类', () => {
+  assert.equal(parseEntry('超市 158', ctx).categoryFullName, '购物/日用百货');
+  assert.equal(parseEntry('早点12块', ctx).categoryFullName, '餐饮/在外吃饭');
+  assert.equal(parseEntry('交电费200', ctx).categoryFullName, '居住/水电燃气');
+  assert.equal(parseEntry('充话费100', ctx).categoryFullName, '通讯/话费流量');
+  assert.equal(parseEntry('昨天加油300', ctx).categoryFullName, '交通/车辆费用');
+});
+
+test('「还钱」不知道谁还谁时要提示核对，而不是默默猜', () => {
+  const r = parseEntry('朋友还钱 2000', ctx);
+  assert.ok(r.warnings.some((w) => w.includes('谁还谁')), r.warnings.join(' | '));
 });
