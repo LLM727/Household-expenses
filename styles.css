@@ -94,7 +94,9 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .field > span { font-size: 12px; color: var(--muted); }
 .field input, .field select, textarea {
   width: 100%;
-  font: inherit;
+  /* 16px 是 iOS Safari 不自动放大页面的下限，别改小 */
+  font-family: inherit;
+  font-size: 16px;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -266,6 +268,22 @@ textarea { resize: vertical; min-height: 62px; line-height: 1.55; }
 .hb-track { flex: 1; height: 8px; background: var(--track); border-radius: 999px; overflow: hidden; }
 .hb-fill { display: block; height: 100%; border-radius: 999px; }
 .hb-value { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; min-width: 66px; text-align: right; }
+
+/* ---------- 分类趋势表 ---------- */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -2px; }
+.trend-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.trend-table th, .trend-table td { padding: 6px 5px; text-align: right; white-space: nowrap; }
+.trend-table thead th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--line); }
+.trend-table .th-name {
+  text-align: left; max-width: 112px; overflow: hidden; text-overflow: ellipsis;
+  position: sticky; left: 0; background: var(--card);
+}
+.trend-table tbody td { border-bottom: 1px solid var(--line); }
+.trend-table tbody tr:last-child td { border-bottom: 0; }
+.trend-table td.zero { color: var(--track); }
 
 /* ---------- 预算 ---------- */
 .budget-list { list-style: none; margin: 0; padding: 0; }

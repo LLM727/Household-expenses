@@ -116,6 +116,8 @@ test('统计页：图表与环比都在', async () => {
   assert.match(html, /按人员/);
   assert.match(html, /<svg class="donut"/);
   assert.match(html, /<svg class="bars"/);
+  assert.match(html, /分类趋势/);
+  assert.match(html, /trend-table/);
   assert.match(html, /预算/);
 });
 
@@ -170,4 +172,50 @@ test('我的页：账户余额按账目推算', async () => {
   const html = root.innerHTML;
   assert.match(html, /账户余额/);
   assert.match(html, /现金/);
+});
+
+test('报销闭环：垫付 → 报销回款冲减同一笔支出', async () => {
+  const { app, root } = await boot();
+
+  // 1) 记一笔垫付
+  await app.doParse('先垫付打车费60元');
+  assert.equal(app.draft.reimbursable, true);
+  await app.saveDraft();
+
+  const paid = [...app.cache.values()].filter((t) => t.reimbursable);
+  assert.equal(paid.length, 1, '垫付没有被标记');
+  const paidTx = paid[0];
+  assert.ok(paidTx.category_id, '垫付应该有分类');
+
+  // 2) 记报销回款，并关联到那笔垫付
+  await app.doParse('报销回来60元');
+  assert.equal(app.draft.kind, 'reimburse_back');
+  assert.match(root.innerHTML, /冲减哪笔垫付/);
+
+  app._onRootChange({ target: { dataset: { bind: 'draft', field: 'reimburseOf' }, value: paidTx.id } });
+  assert.equal(app.draft.categoryId, paidTx.category_id, '没有自动带上原分类');
+
+  await app.saveDraft();
+  const back = [...app.cache.values()].find((t) => t.kind === 'reimburse_back');
+  assert.ok(back, '报销回款没写进去');
+  assert.equal(back.reimburse_of, paidTx.id);
+  assert.equal(back.category_id, paidTx.category_id);
+
+  // 3) 两者相抵，该分类净支出回到 0
+  const { byCategory } = await import('../src/analytics.js');
+  const rows = byCategory([paidTx, back], app.categories, 'expense');
+  const hit = rows.find((r) => r.categoryId === paidTx.category_id);
+  assert.ok(!hit || hit.total === 0, `报销后分类仍有支出：${hit && hit.total}`);
+});
+
+test('转账校验：转出与转入不能相同', async () => {
+  const { app } = await boot();
+  await app.doParse('从银行卡转账500到微信');
+  const acc = app.store.accounts;
+  app.draft.accountId = acc[0].id;
+  app.draft.toAccountId = acc[0].id;
+  const before = [...app.cache.values()].length;
+  await app.saveDraft();
+  assert.equal([...app.cache.values()].length, before, '同账户转账不该被保存');
+  assert.ok(app.draft, '校验失败时草稿应保留');
 });

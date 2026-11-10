@@ -148,6 +148,25 @@ create trigger transactions_touch
   before update on public.transactions
   for each row execute function public.touch_updated_at();
 
+-- 防止任何人把自己「挪」到别人家里：改 family_id 只允许由下面的 RPC 触发
+create or replace function public.members_guard_family()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.family_id is distinct from old.family_id
+     and coalesce(current_setting('app.allow_family_change', true), 'off') <> 'on' then
+    raise exception '不能自己修改所属家庭，请用邀请码加入';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists members_guard_family on public.members;
+create trigger members_guard_family
+  before update on public.members
+  for each row execute function public.members_guard_family();
+
 -- ---------------------------------------------------------------------------
 -- 3. 建家 / 入家（RPC，避开 members 表的插入限制）
 -- ---------------------------------------------------------------------------
@@ -176,6 +195,8 @@ begin
   if v_existing is not null then
     raise exception '你已经在某个家庭里了';
   end if;
+
+  perform set_config('app.allow_family_change', 'on', true);
 
   loop
     v_code := public.gen_invite_code();
@@ -222,6 +243,8 @@ begin
   if v_family.id is null then
     raise exception '邀请码不对，请向家人要一个最新的';
   end if;
+
+  perform set_config('app.allow_family_change', 'on', true);
 
   insert into public.members (id, family_id, display_name, role)
   values (auth.uid(), v_family.id, coalesce(nullif(trim(p_display_name), ''), '家人'), coalesce(p_role, 'child'))
@@ -271,7 +294,7 @@ drop policy if exists members_update_self on public.members;
 create policy members_update_self on public.members
   for update to authenticated
   using (id = auth.uid())
-  with check (id = auth.uid());
+  with check (id = auth.uid() and family_id is not distinct from public.current_family_id());
 
 drop policy if exists members_delete_self on public.members;
 create policy members_delete_self on public.members

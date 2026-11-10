@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   totals, byCategory, byMember, byMonth, byDay, budgetStatus, compareWithPrev, expenseDelta,
+  categoryTrend, accountBalances,
 } from '../src/analytics.js';
 import { DemoStore } from '../src/store.js';
 
@@ -141,8 +142,7 @@ test('budgetStatus：正常/即将超支/已超支', () => {
   assert.equal(byName['餐饮'].remaining, 10);
 });
 
-test('compareWithPrev：环比百分比', () => {
-  const cur = [tx({ amount: 150 })];
+test('compareWithPrev：环比百分比', () => {  const cur = [tx({ amount: 150 })];
   const prev = [tx({ amount: 100 })];
   const r = compareWithPrev(cur, prev);
   assert.equal(r.expense.current, 150);
@@ -195,4 +195,36 @@ test('DemoStore：预算保存与覆盖', async () => {
   await store.saveBudget('2026-11', 'c-food', 0);
   rows = await store.listBudgets('2026-11');
   assert.equal(rows.length, 1);
+});
+
+test('categoryTrend：分类 × 月份矩阵，按总额降序取前 N', () => {
+  const list = [
+    tx({ occurred_on: '2026-09-05', amount: 100, category_id: 'c-food' }),
+    tx({ occurred_on: '2026-10-05', amount: 200, category_id: 'c-food' }),
+    tx({ occurred_on: '2026-11-05', amount: 300, category_id: 'c-food' }),
+    tx({ occurred_on: '2026-11-06', amount: 50, category_id: 'c-edu' }),
+    tx({ occurred_on: '2026-11-07', amount: 999, category_id: 'c-salary', kind: 'income' }),
+    tx({ occurred_on: '2026-11-08', amount: 777, category_id: null, kind: 'transfer' }),
+  ];
+  const r = categoryTrend(list, categories, ['2026-09', '2026-10', '2026-11'], 5);
+  assert.deepEqual(r.months, ['2026-09', '2026-10', '2026-11']);
+  assert.equal(r.rows.length, 2, '收入和转账不该出现在支出趋势里');
+  assert.equal(r.rows[0].name, '餐饮');
+  assert.deepEqual(r.rows[0].values, [100, 200, 300]);
+  assert.equal(r.rows[0].total, 600);
+  assert.equal(r.rows[1].name, '教育');
+  assert.deepEqual(r.rows[1].values, [0, 0, 50]);
+});
+
+test('categoryTrend：topN 截断', () => {
+  const list = [
+    tx({ occurred_on: '2026-11-01', amount: 100, category_id: 'c-food' }),
+    tx({ occurred_on: '2026-11-02', amount: 200, category_id: 'c-edu' }),
+    tx({ occurred_on: '2026-11-03', amount: 300, category_id: null }),
+  ];
+  const r = categoryTrend(list, categories, ['2026-11'], 2);
+  assert.equal(r.rows.length, 2);
+  assert.equal(r.rows[0].name, '未分类');
+  assert.equal(r.rows[0].categoryId, null);
+  assert.equal(r.rows[1].name, '教育');
 });

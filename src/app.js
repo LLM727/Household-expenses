@@ -41,6 +41,7 @@ class App {
     this.listenState = null;
     this.budgetMonth = U.currentMonth();
     this.budgets = [];
+    this.monthBudgets = [];
     this.showCategoryManager = false;
     this._onRootClick = this._onRootClick.bind(this);
     this._onRootInput = this._onRootInput.bind(this);
@@ -97,6 +98,9 @@ class App {
       const rows = await this.store.fetchTransactions(from, to);
       for (const row of rows) this.cache.set(row.id, row);
       this.budgets = await this.store.listBudgets(this.budgetMonth);
+      this.monthBudgets = this.budgetMonth === this.month
+        ? this.budgets
+        : await this.store.listBudgets(this.month);
     } catch (err) {
       this.showToast(this._friendly(err));
     }
@@ -166,15 +170,22 @@ class App {
     const field = el.dataset.field;
     if (field === 'kind') {
       this.draft.kind = el.value;
-      const isSpecial = !KIND_MAP[el.value]?.counted;
-      if (isSpecial) this.draft.categoryId = null;
-      else if (!this.draft.categoryId) {
+      const meta = KIND_MAP[el.value];
+      // 报销回款要看得到分类（它冲减的是那笔垫付的分类），其他特殊类型不要分类
+      if (meta?.counted === false && el.value !== 'reimburse_back') this.draft.categoryId = null;
+      if (meta?.counted !== false && !this.draft.categoryId) {
         const first = this.categories.find((c) => c.kind === (el.value === 'income' ? 'income' : 'expense'));
         this.draft.categoryId = first?.id || null;
       }
       this.render();
     } else if (field === 'categoryId') {
       this.draft.categoryId = el.value || null;
+    } else if (field === 'reimburseOf') {
+      this.draft.reimburseOf = el.value || null;
+      const origin = el.value ? this.cache.get(el.value) : null;
+      if (origin?.category_id) this.draft.categoryId = origin.category_id;
+      if (origin?.member_id) this.draft.memberId = origin.member_id;
+      this.render();
     } else if (field === 'memberId') {
       this.draft.memberId = el.value || null;
     } else if (field === 'accountId') {
@@ -435,12 +446,16 @@ class App {
     if (!d) return;
     if (d.amount == null || Number(d.amount) <= 0) return this.showToast('金额要大于 0');
     if (!d.occurredOn) return this.showToast('请选择日期');
+    if (d.kind === 'transfer') {
+      if (!d.accountId || !d.toAccountId) return this.showToast('转账要选好转出和转入账户');
+      if (d.accountId === d.toAccountId) return this.showToast('转出和转入不能是同一个账户');
+    }
     const kindMeta = KIND_MAP[d.kind];
     const payload = {
       kind: d.kind,
       amount: U.round2(Number(d.amount)),
       occurred_on: d.occurredOn,
-      category_id: kindMeta?.counted === false ? null : d.categoryId || null,
+      category_id: kindMeta?.counted === false && d.kind !== 'reimburse_back' ? null : d.categoryId || null,
       member_id: d.memberId || null,
       note: d.note || '',
       raw_input: d.raw || this.rawText || '',
@@ -772,7 +787,8 @@ class App {
   viewDraft() {
     const d = this.draft;
     const kindMeta = KIND_MAP[d.kind] || KIND_MAP.expense;
-    const showCategory = kindMeta.counted !== false;
+    // 报销回款也要看得到分类：它冲减的就是那笔垫付所在的分类
+    const showCategory = kindMeta.counted !== false || d.kind === 'reimburse_back';
     return `
     <div class="draft">
       <div class="draft-head">
@@ -806,9 +822,16 @@ class App {
         <label class="field"><span>转入账户</span>
           <select data-bind="draft" data-field="toAccountId">${this.accountOptions(d.toAccountId)}</select>
         </label>` : `
-        <label class="field span2"><span>账户（可不选）</span>
+        <label class="field span2"><span>${d.kind === 'reimburse_back' ? '退回哪个账户' : '账户（可不选）'}</span>
           <select data-bind="draft" data-field="accountId">${this.accountOptions(d.accountId)}</select>
         </label>`}
+        ${d.kind === 'reimburse_back' ? `
+        <label class="field span2"><span>冲减哪笔垫付（选了会自动带上分类）</span>
+          <select data-bind="draft" data-field="reimburseOf">
+            <option value="">不指定</option>
+            ${this.reimbursableOptions(d.reimburseOf)}
+          </select>
+        </label>` : ''}
         ${showCategory ? `
         <label class="field span2"><span>分类</span>
           <select data-bind="draft" data-field="categoryId">
@@ -835,6 +858,20 @@ class App {
       opts.push(`<option value="${a.id}" ${selectedId === a.id ? 'selected' : ''}>${U.escapeHtml(a.name)}</option>`);
     }
     return opts.join('');
+  }
+
+  reimbursableOptions(selectedId) {
+    const rows = [...this.cache.values()]
+      .filter((t) => t.kind === 'expense' && t.reimbursable)
+      .sort((a, b) => (a.occurred_on < b.occurred_on ? 1 : -1))
+      .slice(0, 60);
+    if (!rows.length) return '<option value="" disabled>（还没有标记待报销的支出）</option>';
+    return rows.map((t) => {
+      const cat = this.categoryById(t.category_id);
+      const label = [t.occurred_on, cat ? cat.name : '', `${Number(t.amount).toFixed(2)}元`, t.note || '']
+        .filter(Boolean).join(' ');
+      return `<option value="${t.id}" ${selectedId === t.id ? 'selected' : ''}>${U.escapeHtml(label)}</option>`;
+    }).join('');
   }
 
   categoryOptions(kind, selectedId) {    const list = this.categories.filter((c) => c.kind === kind);
@@ -936,7 +973,13 @@ class App {
     const membersRows = A.byMember(rows, this.members, 'expense');
     const months = U.lastMonths(6, month);
     const trend = A.byMonth(this.txInRange(U.monthRange(months[0]).from, U.monthRange(month).to), months);
-    const budgets = A.budgetStatus(this.budgets, this.txOfMonth(this.budgetMonth), this.categories, CONFIG.budgetWarnRatio);
+    const budgets = A.budgetStatus(this.monthBudgets, this.txOfMonth(month), this.categories, CONFIG.budgetWarnRatio);
+    const catTrend = A.categoryTrend(
+      this.txInRange(U.monthRange(months[0]).from, U.monthRange(month).to),
+      this.categories,
+      months,
+      5,
+    );
     const donutTotal = expCats.reduce((a, b) => a + b.total, 0);
 
     return `
@@ -992,8 +1035,26 @@ class App {
     </section>
 
     <section class="card">
+      <h2>分类趋势（近 6 个月 · 支出前 5）</h2>
+      ${catTrend.rows.length ? `
+      <div class="table-scroll">
+        <table class="trend-table">
+          <thead><tr><th class="th-name">分类</th>
+            ${catTrend.months.map((m) => `<th>${m.slice(5)}月</th>`).join('')}
+          </tr></thead>
+          <tbody>${catTrend.rows.map((row) => `
+            <tr><td class="th-name">${U.escapeHtml(row.name)}</td>
+              ${row.values.map((v) => `<td class="${v ? '' : 'zero'}">${v ? Math.round(v).toLocaleString('zh-CN') : '—'}</td>`).join('')}
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p class="fineprint">看哪一类在涨：同一行从左到右，数字变大就是把钱花在这儿了。</p>` : '<p class="empty small">近 6 个月还没有支出</p>'}
+    </section>
+
+    <section class="card">
       <div class="row-between"><h2>预算</h2>
-        <span class="muted">${this.budgetMonth}</span></div>
+        <span class="muted">${month}</span></div>
       ${budgets.length ? `<ul class="budget-list">${budgets.map((b) => `
         <li class="budget ${b.state}">
           <div class="b-head"><span>${b.icon} ${U.escapeHtml(b.name)}</span>

@@ -187,8 +187,43 @@ export function budgetStatus(budgets, transactions, categories, warnRatio = 0.8)
   }).sort((a, b) => b.ratio - a.ratio);
 }
 
-/** 环比：与上一个月对比 */
-export function compareWithPrev(current, previous) {
+/**
+ * 分类 × 月份的趋势表：取总额最高的前 topN 个分类，逐月列出金额。
+ * @returns {{months:string[], rows:Array<{categoryId,name,icon,values:number[],total:number}>}}
+ */
+export function categoryTrend(transactions, categories, months, topN = 5) {
+  const cmap = categoryMap(categories);
+  const monthList = months || [];
+  const bucket = new Map(); // categoryId -> Map(month -> amount)
+
+  for (const tx of transactions || []) {
+    const value = expenseDelta(tx);
+    if (!value) continue;
+    const month = String(tx.occurred_on).slice(0, 7);
+    if (!monthList.includes(month)) continue;
+    const key = tx.category_id || '__none__';
+    if (!bucket.has(key)) bucket.set(key, new Map());
+    const inner = bucket.get(key);
+    inner.set(month, round2((inner.get(month) || 0) + value));
+  }
+
+  const rows = [...bucket.entries()].map(([categoryId, inner]) => {
+    const cat = categoryId === '__none__' ? null : cmap.get(categoryId);
+    const values = monthList.map((m) => round2(inner.get(m) || 0));
+    return {
+      categoryId: categoryId === '__none__' ? null : categoryId,
+      name: cat ? cat.fullName : '未分类',
+      icon: cat?.icon || '📦',
+      values,
+      total: round2(values.reduce((a, b) => a + b, 0)),
+    };
+  });
+
+  rows.sort((a, b) => b.total - a.total);
+  return { months: monthList, rows: rows.slice(0, topN) };
+}
+
+/** 环比：与上一个月对比 */export function compareWithPrev(current, previous) {
   const now = totals(current);
   const prev = totals(previous);
   const pct = (cur, old) => {
