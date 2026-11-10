@@ -23,7 +23,8 @@
 ```
 index.html              入口页面
 styles.css              样式（手机优先，支持深色模式）
-manifest.webmanifest    加到手机桌面的配置
+manifest.json           加到手机桌面的配置（用 .json 后缀，Pages 才会以 application/json 提供）
+.nojekyll               让 GitHub Pages 别过 Jekyll，原样发布文件
 icon.svg                图标
 
 src/
@@ -45,19 +46,27 @@ test/e2e/               端到端：真 Postgres 上跑真实数据层（需临�
 tools/serve.js          本地预览服务器
 tools/check-config.js   上线自检：填完配置跑一下，逐条告诉你哪里没弄好
 tools/check-assets.js   部署前资源检查：大小写、缺失文件、裸导入
+tools/check-pages.js    模拟 GitHub Pages 子路径托管，验证推上去不会白屏
 ```
 
 ---
 
-## 推送前跑两个检查
+## 推送前跑三个检查
 
 ```bash
 node tools/check-config.js    # Supabase 那边：地址/key/表/行级权限/函数/注册
 node tools/check-assets.js    # 这边：文件都在、大小写对、没有 Node 专有 API
+node tools/check-pages.js     # 托管那边：子路径 /Household-expenses/ 下每个引用都能取到
 ```
 
 第二个专治「本地能开、Pages 白屏」：Windows 不区分大小写，GitHub Pages 是 Linux。
 `import './Utils.js'` 在你电脑上跑得好好的，推上去就是 404 白屏。
+
+第三个专治另一种「本地能开、Pages 白屏」：Pages 把仓库放在**子路径**下
+（`https://用户名.github.io/Household-expenses/`），不是域名根目录。所以 `href="/styles.css"`
+这种绝对路径在本地根路径预览时完全正常，推上去就 404。这个脚本会把仓库复制到临时目录的
+`Household-expenses/` 子目录里，起一个和 Pages 行为一致的服务器，从首页开始把 14 个引用
+逐个请求一遍，同时检查 manifest 的 `start_url` 是否落在子路径内、`.nojekyll` 是否就位。
 
 ---
 
