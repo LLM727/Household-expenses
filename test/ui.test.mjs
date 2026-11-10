@@ -391,3 +391,81 @@ test('导出 CSV：带 BOM、表头正确、金额是两位小数', async () => 
   assert.ok(text.includes('"日期","类型","金额"'), '表头不对');
   assert.ok(/"\d+\.\d{2}"/.test(text), '金额不是两位小数');
 });
+
+/* ------------------------------------------------------------------ */
+/* 语音：浏览器 API 用假替身驱动，验证「说的字 → 草稿卡」这条链路          */
+/* ------------------------------------------------------------------ */
+
+function withRawTextInput(root) {
+  const box = { value: '' };
+  root.querySelector = (selector) => (selector === '#raw-text' ? box : null);
+  return box;
+}
+
+const results = (transcript, isFinal) => [{ 0: { transcript }, isFinal }];
+
+test('语音：浏览器不支持时说明白，不报错', async () => {
+  const { app } = await boot();
+  delete globalThis.SpeechRecognition;
+  delete globalThis.webkitSpeechRecognition;
+  app.startVoice();
+  assert.match(app.toastMsg, /不支持语音识别/, `提示不对：${app.toastMsg}`);
+});
+
+test('语音：中途结果只填输入框，说完才自动生成草稿', async () => {
+  const { app, root } = await boot();
+  const box = withRawTextInput(root);
+  app.tab = 'record';
+  app.render();
+
+  class FakeSR {
+    constructor() {
+      FakeSR.last = this;
+    }
+
+    start() {
+      this.onstart?.();
+    }
+  }
+  globalThis.SpeechRecognition = FakeSR;
+
+  app.startVoice();
+  assert.equal(app.listenState, 'listening', '没有进入「正在听」状态');
+  assert.equal(FakeSR.last.lang, 'zh-CN', `语言不是中文：${FakeSR.last.lang}`);
+  assert.equal(FakeSR.last.interimResults, true);
+
+  // 话还没说完：只回填到输入框，不急着解析
+  FakeSR.last.onresult({ results: results('今天买菜', false) });
+  assert.equal(box.value, '今天买菜', '中途结果没填进输入框');
+  assert.equal(app.draft, null, '没说完就生成草稿了');
+
+  // 说完了：自动解析成草稿卡
+  FakeSR.last.onresult({ results: results('今天买菜35元', true) });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(app.draft, '说完没生成草稿');
+  assert.equal(Number(app.draft.amount), 35, `金额没解析出来：${app.draft.amount}`);
+
+  FakeSR.last.onend();
+  assert.equal(app.listenState, null, '结束后状态没复位');
+  delete globalThis.SpeechRecognition;
+});
+
+test('语音：麦克风被拒绝时说人话，并复位状态', async () => {
+  const { app } = await boot();
+  class FakeSR {
+    constructor() {
+      FakeSR.last = this;
+    }
+
+    start() {
+      this.onstart?.();
+    }
+  }
+  globalThis.SpeechRecognition = FakeSR;
+  app.startVoice();
+  FakeSR.last.onerror({ error: 'not-allowed' });
+
+  assert.match(app.toastMsg, /麦克风被拒绝/, `提示不对：${app.toastMsg}`);
+  assert.equal(app.listenState, null, '出错后状态没复位');
+  delete globalThis.SpeechRecognition;
+});
