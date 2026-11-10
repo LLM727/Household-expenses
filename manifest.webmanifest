@@ -1,0 +1,19 @@
+{
+  "name": "家庭记账本",
+  "short_name": "记账本",
+  "description": "一家人的账记在一起：语音或文字记账，自动分类，共享账本与图表统计。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#0f172a",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

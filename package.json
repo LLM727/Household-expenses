@@ -1,0 +1,11 @@
+{
+  "name": "household-expenses",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "家庭记账本 - 语音/文字记账，自动分类，共享账本与统计报表",
+  "scripts": {
+    "test": "node --test test/",
+    "serve": "node tools/serve.js"
+  }
+}

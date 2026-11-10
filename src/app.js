@@ -1,0 +1,1093 @@
+/**
+ * 界面层：单页应用，四个标签页 —— 记账 / 流水 / 统计 / 我的
+ * 无框架、无构建步骤，改完刷新即可生效。
+ */
+
+import { CONFIG, isConfigured } from './config.js';
+import { createStore } from './store.js';
+import { KINDS, KIND_MAP, ROLES } from './defaults.js';
+import { parseEntry } from './parse.js';
+import * as A from './analytics.js';
+import { donutChart, legend, groupedBars, horizontalBars } from './charts.js';
+import * as U from './utils.js';
+
+const ROLE_MAP = Object.fromEntries(ROLES.map((r) => [r.key, r.name]));
+
+const TABS = [
+  { key: 'record', name: '记账', icon: '✏️' },
+  { key: 'list', name: '流水', icon: '📋' },
+  { key: 'stats', name: '统计', icon: '📊' },
+  { key: 'me', name: '我的', icon: '👤' },
+];
+
+/* ------------------------------------------------------------------ */
+
+class App {
+  constructor(root, store) {
+    this.root = root;
+    this.store = store;
+    this.tab = 'record';
+    this.month = U.currentMonth();
+    this.cache = new Map();
+    this.rawText = '';
+    this.draft = null;
+    this.editing = null;
+    this.toastMsg = '';
+    this.toastTimer = null;
+    this.busy = false;
+    this.authError = '';
+    this.authMode = 'signin'; // signin | signup
+    this.familyMode = 'create'; // create | join
+    this.listenState = null;
+    this.budgetMonth = U.currentMonth();
+    this.budgets = [];
+    this.showCategoryManager = false;
+    this._onRootClick = this._onRootClick.bind(this);
+    this._onRootInput = this._onRootInput.bind(this);
+    this._onRootChange = this._onRootChange.bind(this);
+    this._bound = false;
+  }
+
+  /* ---------------- 生命周期 ---------------- */
+
+  async init() {
+    this._bind();
+    try {
+      if (this.store.mode === 'remote') {
+        await this.store.loadProfile();
+      } else {
+        await this.store.loadProfile();
+      }
+    } catch (err) {
+      this.authError = this._friendly(err);
+    }
+    await this.refreshData();
+    this.render();
+  }
+
+  _bind() {
+    if (this._bound) return;
+    this.root.addEventListener('click', this._onRootClick);
+    this.root.addEventListener('input', this._onRootInput);
+    this.root.addEventListener('change', this._onRootChange);
+    this._bound = true;
+  }
+
+  get loggedIn() {
+    return Boolean(this.store.session);
+  }
+
+  get hasFamily() {
+    return Boolean(this.store.profile?.family_id);
+  }
+
+  get isDemo() {
+    return this.store.mode === 'demo';
+  }
+
+  /* ---------------- 数据 ---------------- */
+
+  async refreshData() {
+    if (!this.loggedIn || !this.hasFamily) return;
+    const months = [this.month, this.budgetMonth, U.currentMonth()];
+    for (let i = 1; i <= 5; i += 1) months.push(U.shiftMonth(this.month, -i));
+    const from = U.monthRange(months.reduce((a, b) => (a < b ? a : b))).from;
+    const to = U.monthRange(months.reduce((a, b) => (a > b ? a : b))).to;
+    try {
+      const rows = await this.store.fetchTransactions(from, to);
+      for (const row of rows) this.cache.set(row.id, row);
+      this.budgets = await this.store.listBudgets(this.budgetMonth);
+    } catch (err) {
+      this.showToast(this._friendly(err));
+    }
+  }
+
+  txOfMonth(month) {
+    return [...this.cache.values()].filter((t) => String(t.occurred_on).slice(0, 7) === month);
+  }
+
+  txInRange(from, to) {
+    return [...this.cache.values()].filter((t) => t.occurred_on >= from && t.occurred_on <= to);
+  }
+
+  get categories() {
+    return this.store.categories || [];
+  }
+
+  get members() {
+    return this.store.members || [];
+  }
+
+  get myMember() {
+    return this.members.find((m) => m.id === this.store.profile?.id) || this.members[0] || null;
+  }
+
+  categoryById(id) {
+    return A.categoryMap(this.categories).get(id) || null;
+  }
+
+  memberName(id) {
+    const m = this.members.find((x) => x.id === id);
+    return m ? m.display_name : '';
+  }
+
+  /* ---------------- 事件 ---------------- */
+
+  _onRootInput(e) {
+    const el = e.target;
+    if (!el?.dataset) return;
+    if (el.dataset.bind === 'rawText') {
+      this.rawText = el.value;
+    } else if (el.dataset.bind === 'draft') {
+      if (!this.draft) return;
+      const field = el.dataset.field;
+      if (field === 'note') this.draft.note = el.value;
+      else if (field === 'amount') this.draft.amount = el.value === '' ? null : Number(el.value);
+      else if (field === 'occurredOn') this.draft.occurredOn = el.value;
+    }
+  }
+
+  _onRootChange(e) {
+    const el = e.target;
+    if (!el?.dataset) return;
+    if (el.dataset.bind !== 'draft' || !this.draft) return;
+    const field = el.dataset.field;
+    if (field === 'kind') {
+      this.draft.kind = el.value;
+      const isSpecial = !KIND_MAP[el.value]?.counted;
+      if (isSpecial) this.draft.categoryId = null;
+      else if (!this.draft.categoryId) {
+        const first = this.categories.find((c) => c.kind === (el.value === 'income' ? 'income' : 'expense'));
+        this.draft.categoryId = first?.id || null;
+      }
+      this.render();
+    } else if (field === 'categoryId') {
+      this.draft.categoryId = el.value || null;
+    } else if (field === 'memberId') {
+      this.draft.memberId = el.value || null;
+    }
+  }
+
+  async _onRootClick(e) {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    try {
+      await this._handleAction(act, btn, e);
+    } catch (err) {
+      this.showToast(this._friendly(err));
+    }
+  }
+
+  async _handleAction(act, btn, e) {
+    switch (act) {
+      /* 认证 */
+      case 'switch-auth':
+        this.authMode = this.authMode === 'signin' ? 'signup' : 'signin';
+        this.authError = '';
+        return this.render();
+      case 'submit-auth':
+        return this.submitAuth();
+      case 'submit-family':
+        return this.submitFamily();
+      case 'switch-family-mode':
+        this.familyMode = this.familyMode === 'create' ? 'join' : 'create';
+        return this.render();
+      case 'signout':
+        await this.store.signOut();
+        this.cache.clear();
+        this.render();
+        return;
+
+      /* 导航 */
+      case 'tab': {
+        this.tab = btn.dataset.tab;
+        if (this.tab === 'stats' || this.tab === 'list') await this.refreshData();
+        return this.render();
+      }
+      case 'month-prev':
+      case 'month-next': {
+        this.month = U.shiftMonth(this.month, act === 'month-prev' ? -1 : 1);
+        await this.refreshData();
+        return this.render();
+      }
+
+      /* 记账 */
+      case 'parse':
+        return this.doParse(this.rawText);
+      case 'voice':
+        return this.startVoice();
+      case 'clear-text':
+        this.rawText = '';
+        this.draft = null;
+        return this.render();
+      case 'cancel-draft':
+      case 'cancel-edit':
+        this.draft = null;
+        this.editing = null;
+        this.rawText = '';
+        return this.render();
+      case 'save-draft':
+        return this.saveDraft();
+      case 'edit-tx': {
+        const id = btn.dataset.id;
+        const tx = this.cache.get(id);
+        if (!tx) return;
+        this.editing = id;
+        this.draft = {
+          kind: tx.kind,
+          amount: Number(tx.amount),
+          occurredOn: tx.occurred_on,
+          categoryId: tx.category_id,
+          memberId: tx.member_id,
+          note: tx.note || '',
+          reimbursable: tx.reimbursable,
+          accountId: tx.account_id,
+          toAccountId: tx.to_account_id,
+          reimburseOf: tx.reimburse_of,
+          raw: tx.raw_input || '',
+          warnings: [],
+          confidence: 1,
+          fromEdit: true,
+        };
+        this.tab = 'record';
+        return this.render();
+      }
+      case 'delete-tx': {
+        const id = btn.dataset.id;
+        if (!confirm('确定删除这条账目吗？')) return;
+        await this.store.deleteTransaction(id);
+        this.cache.delete(id);
+        await this.refreshData();
+        this.showToast('已删除');
+        return this.render();
+      }
+      case 'delete-draft':
+        if (!this.editing) return;
+        if (!confirm('确定删除这条账目吗？')) return;
+        await this.store.deleteTransaction(this.editing);
+        this.cache.delete(this.editing);
+        this.editing = null;
+        this.draft = null;
+        await this.refreshData();
+        this.showToast('已删除');
+        return this.render();
+
+      /* 我的 */
+      case 'copy-invite':
+        return this.copyInvite();
+      case 'save-profile':
+        return this.saveProfile();
+      case 'toggle-cat-manager':
+        this.showCategoryManager = !this.showCategoryManager;
+        return this.render();
+      case 'add-category':
+        return this.addCategory();
+      case 'delete-category':
+        if (!confirm('删除这个分类？已有账目会变成未分类。')) return;
+        await this.store.deleteCategory(btn.dataset.id);
+        return this.render();
+      case 'budget-month-prev':
+      case 'budget-month-next':
+        this.budgetMonth = U.shiftMonth(this.budgetMonth, act === 'budget-month-prev' ? -1 : 1);
+        this.budgets = await this.store.listBudgets(this.budgetMonth);
+        return this.render();
+      case 'save-budget':
+        return this.saveBudget();
+      case 'export-csv':
+        return this.exportCsv();
+      case 'reset-demo':
+        if (!confirm('重置演示数据？本机改动会全部丢掉。')) return;
+        this.store.resetDemo();
+        this.cache.clear();
+        await this.refreshData();
+        return this.render();
+      default:
+        return undefined;
+    }
+  }
+
+  /* ---------------- 认证 ---------------- */
+
+  async submitAuth() {
+    const email = this.root.querySelector('#auth-email')?.value.trim();
+    const password = this.root.querySelector('#auth-password')?.value || '';
+    const name = this.root.querySelector('#auth-name')?.value.trim();
+    if (!email || !password) {
+      this.authError = '邮箱和密码都要填';
+      return this.render();
+    }
+    if (this.authMode === 'signup' && password.length < 6) {
+      this.authError = '密码至少 6 位';
+      return this.render();
+    }
+    this.busy = true;
+    this.authError = '';
+    this.render();
+    try {
+      if (this.authMode === 'signup') await this.store.signUp(email, password, name || '我');
+      else await this.store.signIn(email, password);
+      await this.refreshData();
+    } catch (err) {
+      this.authError = this._friendly(err);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  async submitFamily() {
+    const familyName = this.root.querySelector('#family-name')?.value.trim() || '我的家';
+    const code = this.root.querySelector('#family-code')?.value.trim() || '';
+    const displayName = this.root.querySelector('#family-display')?.value.trim() || '我';
+    const role = this.root.querySelector('#family-role')?.value || 'father';
+    this.busy = true;
+    this.authError = '';
+    this.render();
+    try {
+      if (this.familyMode === 'create') await this.store.createFamily(familyName, displayName, role);
+      else await this.store.joinFamily(code, displayName, role);
+      await this.refreshData();
+    } catch (err) {
+      this.authError = this._friendly(err);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  async saveProfile() {
+    const displayName = this.root.querySelector('#profile-name')?.value.trim();
+    const role = this.root.querySelector('#profile-role')?.value || 'father';
+    if (!displayName) return this.showToast('昵称不能为空');
+    await this.store.updateProfile({ display_name: displayName, role });
+    this.showToast('已保存');
+    return this.render();
+  }
+
+  async copyInvite() {
+    const code = this.store.family?.invite_code;
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      this.showToast(`邀请码 ${code} 已复制`);
+    } catch {
+      this.showToast(`邀请码：${code}`);
+    }
+    return undefined;
+  }
+
+  /* ---------------- 记账 ---------------- */
+
+  async doParse(text) {
+    if (!text || !text.trim()) return this.showToast('先说一句或写一句，比如「今天买菜35元」');
+    const draft = parseEntry(text, {
+      today: U.todayISO(),
+      members: this.members,
+      categories: this.categories.map((c) => {
+        const full = this.categoryById(c.id);
+        return { ...c, parentName: full?.parentName || null, fullName: full?.fullName || c.name };
+      }),
+    });
+    // 默认人员：当前登录人
+    if (!draft.memberId && this.myMember) {
+      draft.memberId = this.myMember.id;
+      draft.memberName = this.myMember.display_name;
+    }
+    // 特殊类型不挂分类
+    if (KIND_MAP[draft.kind] && !KIND_MAP[draft.kind].counted) draft.categoryId = null;
+    if (!draft.categoryId && draft.kind !== 'transfer') {
+      const wanted = draft.kind === 'income' ? 'income' : 'expense';
+      const fallback = this.categories.find(
+        (c) => c.kind === wanted && /其他/.test(c.name),
+      ) || this.categories.find((c) => c.kind === wanted);
+      if (fallback) {
+        draft.categoryId = fallback.id;
+        draft.categoryName = fallback.name;
+      }
+    }
+    this.draft = draft;
+    this.editing = null;
+    return this.render();
+  }
+
+  async saveDraft() {
+    const d = this.draft;
+    if (!d) return;
+    if (d.amount == null || Number(d.amount) <= 0) return this.showToast('金额要大于 0');
+    if (!d.occurredOn) return this.showToast('请选择日期');
+    const kindMeta = KIND_MAP[d.kind];
+    const payload = {
+      kind: d.kind,
+      amount: U.round2(Number(d.amount)),
+      occurred_on: d.occurredOn,
+      category_id: kindMeta?.counted === false ? null : d.categoryId || null,
+      member_id: d.memberId || null,
+      note: d.note || '',
+      raw_input: d.raw || this.rawText || '',
+      reimbursable: Boolean(d.reimbursable),
+      account_id: d.accountId || null,
+      to_account_id: d.toAccountId || null,
+      reimburse_of: d.reimburseOf || null,
+    };
+    this.busy = true;
+    this.render();
+    try {
+      if (this.editing) await this.store.updateTransaction(this.editing, payload);
+      else await this.store.addTransaction(payload);
+      this.draft = null;
+      this.editing = null;
+      this.rawText = '';
+      await this.refreshData();
+      this.showToast('记好了');
+    } catch (err) {
+      this.showToast(this._friendly(err));
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  startVoice() {
+    const SR = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
+    if (!SR) {
+      this.showToast('这个浏览器不支持语音识别，请用 Chrome / Edge，或直接打字');
+      return undefined;
+    }
+    if (this.listenState === 'listening') return undefined;
+    try {
+      const rec = new SR();
+      rec.lang = 'zh-CN';
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      rec.continuous = false;
+      this.recognizer = rec;
+      rec.onstart = () => {
+        this.listenState = 'listening';
+        this.render();
+      };
+      rec.onerror = (ev) => {
+        this.listenState = null;
+        this.showToast(ev.error === 'not-allowed' ? '麦克风被拒绝了，请在浏览器里允许' : `语音识别出错：${ev.error}`);
+        this.render();
+      };
+      rec.onend = () => {
+        this.listenState = null;
+        this.render();
+      };
+      rec.onresult = (ev) => {
+        let text = '';
+        for (let i = 0; i < ev.results.length; i += 1) text += ev.results[i][0].transcript;
+        this.rawText = text.trim();
+        const ta = this.root.querySelector('#raw-text');
+        if (ta) ta.value = this.rawText;
+        if (ev.results[0].isFinal) {
+          this.doParse(this.rawText);
+        }
+      };
+      rec.start();
+      this.showToast('请说话…');
+    } catch (err) {
+      this.showToast(`无法启动语音：${err.message}`);
+    }
+    return undefined;
+  }
+
+  /* ---------------- 预算 / 分类 ---------------- */
+
+  async saveBudget() {
+    const rows = [...this.root.querySelectorAll('[data-budget-input]')];
+    for (const input of rows) {
+      const categoryId = input.dataset.budgetInput || null;
+      const value = input.value.trim() === '' ? 0 : Number(input.value);
+      await this.store.saveBudget(this.budgetMonth, categoryId || null, value);
+    }
+    this.budgets = await this.store.listBudgets(this.budgetMonth);
+    this.showToast('预算已保存');
+    return this.render();
+  }
+
+  async addCategory() {
+    const name = this.root.querySelector('#new-cat-name')?.value.trim();
+    const kind = this.root.querySelector('#new-cat-kind')?.value || 'expense';
+    const parentId = this.root.querySelector('#new-cat-parent')?.value || null;
+    const keywordsRaw = this.root.querySelector('#new-cat-words')?.value.trim() || '';
+    if (!name) return this.showToast('分类名不能为空');
+    const keywords = keywordsRaw
+      .split(/[,，\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    await this.store.addCategory({ name, kind, parentId, keywords });
+    this.showToast('已添加');
+    return this.render();
+  }
+
+  /* ---------------- 导出 ---------------- */
+
+  exportCsv() {
+    const month = this.month;
+    const rows = this.txOfMonth(month).sort((a, b) => (a.occurred_on < b.occurred_on ? -1 : 1));
+    if (!rows.length) return this.showToast('这个月没有账目可导出');
+    const cmap = A.categoryMap(this.categories);
+    const header = ['日期', '类型', '金额', '分类', '人员', '备注', '记账人', '可报销', '原始输入'];
+    const lines = [header.join(',')];
+    for (const tx of rows) {
+      const cat = tx.category_id ? cmap.get(tx.category_id) : null;
+      const cells = [
+        tx.occurred_on,
+        KIND_MAP[tx.kind]?.name || tx.kind,
+        Number(tx.amount).toFixed(2),
+        cat ? cat.fullName : '',
+        this.memberName(tx.member_id),
+        tx.note || '',
+        this.memberName(tx.created_by),
+        tx.reimbursable ? '是' : '',
+        tx.raw_input || '',
+      ].map((c) => `"${String(c).replace(/"/g, '""')}"`);
+      lines.push(cells.join(','));
+    }
+    // 加 BOM，Excel 打开中文不乱码
+    const blob = new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `家庭记账-${month}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return undefined;
+  }
+
+  /* ---------------- 提示 ---------------- */
+
+  showToast(msg) {
+    this.toastMsg = msg;
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => {
+      this.toastMsg = '';
+      const el = this.root.querySelector('#toast');
+      if (el) {
+        el.textContent = '';
+        el.classList.remove('show');
+      }
+    }, 2600);
+    const el = this.root.querySelector('#toast');
+    if (el) {
+      el.textContent = msg;
+      el.classList.add('show');
+    } else {
+      this.render();
+    }
+  }
+
+  _friendly(err) {
+    const raw = err?.message || String(err);
+    if (/Invalid login credentials/i.test(raw)) return '邮箱或密码不对';
+    if (/User already registered/i.test(raw)) return '这个邮箱已经注册过了，直接登录吧';
+    if (/email.*not.*confirmed/i.test(raw)) return '邮箱还没确认，请先点邮件里的链接（或在 Supabase 关掉「Confirm email」）';
+    if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) return '网络连不上 Supabase，检查一下地址/网络';
+    if (/JWT|token is expired/i.test(raw)) return '登录过期了，请重新登录';
+    return raw;
+  }
+
+  /* ================================================================ */
+  /* 渲染                                                              */
+  /* ================================================================ */
+
+  render() {
+    let body;
+    if (!this.loggedIn) body = this.viewAuth();
+    else if (!this.hasFamily) body = this.viewFamilySetup();
+    else body = this.viewShell();
+
+    this.root.innerHTML = `
+      <div class="app-frame">
+        ${body}
+        <div id="toast" class="toast ${this.toastMsg ? 'show' : ''}">${U.escapeHtml(this.toastMsg)}</div>
+      </div>`;
+  }
+
+  /* ---- 登录 / 注册 ---- */
+
+  viewAuth() {
+    const isSignup = this.authMode === 'signup';
+    return `
+    <div class="screen center">
+      <div class="brand">
+        <div class="brand-icon">🏠</div>
+        <h1>${U.escapeHtml(CONFIG.appName)}</h1>
+        <p class="muted">一家人的账，记在一起</p>
+      </div>
+      <div class="card">
+        <div class="seg">
+          <button class="seg-item ${isSignup ? '' : 'active'}" data-act="switch-auth">登录</button>
+          <button class="seg-item ${isSignup ? 'active' : ''}" data-act="switch-auth">注册</button>
+        </div>
+        ${isSignup ? `
+          <label class="field"><span>你的称呼</span>
+            <input id="auth-name" type="text" placeholder="比如：爸爸" autocomplete="nickname">
+          </label>` : ''}
+        <label class="field"><span>邮箱</span>
+          <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email">
+        </label>
+        <label class="field"><span>密码</span>
+          <input id="auth-password" type="password" placeholder="至少 6 位" autocomplete="${isSignup ? 'new-password' : 'current-password'}">
+        </label>
+        ${this.authError ? `<p class="error">${U.escapeHtml(this.authError)}</p>` : ''}
+        <button class="btn primary block" data-act="submit-auth" ${this.busy ? 'disabled' : ''}>
+          ${this.busy ? '处理中…' : isSignup ? '注册并继续' : '登录'}
+        </button>
+      </div>
+      <p class="fineprint">同一个家庭的人各注册一个账号，然后输邀请码加入同一本账。</p>
+    </div>`;
+  }
+
+  /* ---- 建家 / 加家 ---- */
+
+  viewFamilySetup() {
+    const isCreate = this.familyMode === 'create';
+    return `
+    <div class="screen center">
+      <div class="brand">
+        <div class="brand-icon">👨‍👩‍👧</div>
+        <h1>${isCreate ? '建一本家庭账' : '加入家人的账本'}</h1>
+        <p class="muted">${isCreate ? '建好后会得到一个邀请码，家人用它加入' : '向家人要那个 6 位邀请码'}</p>
+      </div>
+      <div class="card">
+        <div class="seg">
+          <button class="seg-item ${isCreate ? 'active' : ''}" data-act="switch-family-mode">创建家庭</button>
+          <button class="seg-item ${isCreate ? '' : 'active'}" data-act="switch-family-mode">邀请码加入</button>
+        </div>
+        ${isCreate ? `
+          <label class="field"><span>家庭名称</span>
+            <input id="family-name" type="text" placeholder="我的家">
+          </label>` : `
+          <label class="field"><span>邀请码</span>
+            <input id="family-code" type="text" placeholder="例如 K3M9QP" style="text-transform:uppercase">
+          </label>`}
+        <label class="field"><span>你在家里的称呼</span>
+          <input id="family-display" type="text" placeholder="比如：妈妈">
+        </label>
+        <label class="field"><span>你的身份</span>
+          <select id="family-role">
+            ${ROLES.map((r) => `<option value="${r.key}">${r.name}</option>`).join('')}
+          </select>
+        </label>
+        ${this.authError ? `<p class="error">${U.escapeHtml(this.authError)}</p>` : ''}
+        <button class="btn primary block" data-act="submit-family" ${this.busy ? 'disabled' : ''}>
+          ${this.busy ? '处理中…' : isCreate ? '创建' : '加入'}
+        </button>
+      </div>
+    </div>`;
+  }
+
+  /* ---- 主框架 ---- */
+
+  viewShell() {
+    const view = this.tab === 'record' ? this.viewRecord()
+      : this.tab === 'list' ? this.viewList()
+        : this.tab === 'stats' ? this.viewStats()
+          : this.viewMe();
+    const warning = A.budgetStatus(this.budgets, this.txOfMonth(U.currentMonth()), this.categories)
+      .filter((b) => b.state !== 'ok');
+    return `
+    <header class="topbar">
+      <div class="topbar-title">
+        <strong>${U.escapeHtml(this.store.family?.name || '家庭账本')}</strong>
+        ${this.isDemo ? '<span class="pill demo">演示模式</span>' : ''}
+      </div>
+      ${warning.length ? `<button class="pill warn" data-act="tab" data-tab="stats">⚠️ ${U.escapeHtml(warning[0].name)}${warning[0].state === 'over' ? '已超支' : '快超支'}</button>` : '<span class="pill">本月</span>'}
+    </header>
+    <main class="view" id="view">${view}</main>
+    <nav class="tabbar">
+      ${TABS.map((t) => `
+        <button class="tab ${this.tab === t.key ? 'active' : ''}" data-act="tab" data-tab="${t.key}">
+          <span class="tab-icon">${t.icon}</span><span class="tab-name">${t.name}</span>
+        </button>`).join('')}
+    </nav>`;
+  }
+
+  /* ---- 记账页 ---- */
+
+  viewRecord() {
+    const month = U.currentMonth();
+    const t = A.totals(this.txOfMonth(month));
+    const isEditing = Boolean(this.editing);
+    return `
+    <section class="card">
+      <div class="month-summary">
+        <div><span class="lbl">本月支出</span><strong class="exp">${U.money(t.expense)}</strong></div>
+        <div><span class="lbl">本月收入</span><strong class="inc">${U.money(t.income)}</strong></div>
+        <div><span class="lbl">结余</span><strong class="${t.net >= 0 ? 'inc' : 'exp'}">${U.money(t.net)}</strong></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row-between">
+        <h2>${isEditing ? '修改这笔账' : '记一笔'}</h2>
+        ${isEditing ? '<span class="pill">编辑中</span>' : ''}
+      </div>
+      ${isEditing ? '' : `
+      <div class="input-wrap">
+        <textarea id="raw-text" data-bind="rawText" rows="2"
+          placeholder="说一句或写一句，比如：&#10;今天给孩子报补习班花了3000&#10;11月8日买菜35.5元&#10;收到工资8000">${U.escapeHtml(this.rawText)}</textarea>
+        <button class="mic ${this.listenState === 'listening' ? 'listening' : ''}" data-act="voice" title="语音输入">
+          ${this.listenState === 'listening' ? '●' : '🎤'}
+        </button>
+      </div>
+      <div class="row-gap">
+        <button class="btn primary" data-act="parse">识别一下</button>
+        <button class="btn ghost" data-act="clear-text">清空</button>
+      </div>`}
+      ${this.draft ? this.viewDraft() : ''}
+    </section>
+
+    <section class="card">
+      <div class="row-between"><h2>最近的账</h2>
+        <button class="link" data-act="tab" data-tab="list">全部 ›</button></div>
+      ${this.viewTxList(this.txOfMonth(month).slice(0, 5), { compact: true })}
+    </section>`;
+  }
+
+  viewDraft() {
+    const d = this.draft;
+    const kindMeta = KIND_MAP[d.kind] || KIND_MAP.expense;
+    const showCategory = kindMeta.counted !== false;
+    return `
+    <div class="draft">
+      <div class="draft-head">
+        <span class="conf" title="识别把握">${Math.round((d.confidence || 0) * 100)}%</span>
+        <span>识别结果，确认或改一下</span>
+      </div>
+      ${d.warnings?.length ? `<ul class="warn-list">${d.warnings.map((w) => `<li>${U.escapeHtml(w)}</li>`).join('')}</ul>` : ''}
+      <div class="grid2">
+        <label class="field"><span>金额</span>
+          <input type="number" inputmode="decimal" step="0.01" data-bind="draft" data-field="amount"
+            value="${d.amount ?? ''}" placeholder="0.00">
+        </label>
+        <label class="field"><span>日期</span>
+          <input type="date" data-bind="draft" data-field="occurredOn" value="${d.occurredOn || U.todayISO()}">
+        </label>
+        <label class="field"><span>类型</span>
+          <select data-bind="draft" data-field="kind">
+            ${KINDS.map((k) => `<option value="${k.key}" ${d.kind === k.key ? 'selected' : ''}>${k.name}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field"><span>人员</span>
+          <select data-bind="draft" data-field="memberId">
+            <option value="">不指定</option>
+            ${this.members.map((m) => `<option value="${m.id}" ${d.memberId === m.id ? 'selected' : ''}>${U.escapeHtml(m.display_name)}</option>`).join('')}
+          </select>
+        </label>
+        ${showCategory ? `
+        <label class="field span2"><span>分类</span>
+          <select data-bind="draft" data-field="categoryId">
+            ${this.categoryOptions(d.kind === 'income' ? 'income' : 'expense', d.categoryId)}
+          </select>
+        </label>` : ''}
+        <label class="field span2"><span>备注</span>
+          <input type="text" data-bind="draft" data-field="note" value="${U.escapeHtml(d.note || '')}" placeholder="比如：牛奶、补习班">
+        </label>
+      </div>
+      <div class="row-gap">
+        <button class="btn primary" data-act="save-draft" ${this.busy ? 'disabled' : ''}>${this.busy ? '保存中…' : d.fromEdit ? '保存修改' : '确认入账'}</button>
+        ${d.fromEdit ? `<button class="btn danger-ghost" data-act="delete-draft">删除</button>` : ''}
+        <button class="btn ghost" data-act="${d.fromEdit ? 'cancel-edit' : 'cancel-draft'}">取消</button>
+      </div>
+      ${d.raw ? `<p class="fineprint">原话：${U.escapeHtml(d.raw)}</p>` : ''}
+    </div>`;
+  }
+
+  categoryOptions(kind, selectedId) {
+    const list = this.categories.filter((c) => c.kind === kind);
+    const parents = list.filter((c) => !c.parent_id);
+    const opts = [];
+    for (const p of parents) {
+      const kids = list.filter((c) => c.parent_id === p.id);
+      if (!kids.length) {
+        opts.push(`<option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${p.icon || ''} ${U.escapeHtml(p.name)}</option>`);
+      } else {
+        opts.push(`<optgroup label="${U.escapeHtml(p.name)}">
+          <option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${U.escapeHtml(p.name)}（大类）</option>
+          ${kids.map((c) => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${U.escapeHtml(c.name)}</option>`).join('')}
+        </optgroup>`);
+      }
+    }
+    if (!opts.length) opts.push('<option value="">（还没有分类，请到「我的」里添加）</option>');
+    return opts.join('');
+  }
+
+  /* ---- 流水页 ---- */
+
+  viewList() {
+    const rows = this.txOfMonth(this.month).sort((a, b) => {
+      if (a.occurred_on !== b.occurred_on) return a.occurred_on < b.occurred_on ? 1 : -1;
+      return String(b.created_at || '') < String(a.created_at || '') ? -1 : 1;
+    });
+    const t = A.totals(rows);
+    const groups = U.groupBy(rows, (r) => r.occurred_on);
+    return `
+    <section class="card">
+      <div class="month-nav">
+        <button class="btn icon" data-act="month-prev">‹</button>
+        <div class="month-title">${this.month.replace('-', ' 年 ')} 月</div>
+        <button class="btn icon" data-act="month-next">›</button>
+      </div>
+      <div class="month-summary">
+        <div><span class="lbl">支出</span><strong class="exp">${U.money(t.expense)}</strong></div>
+        <div><span class="lbl">收入</span><strong class="inc">${U.money(t.income)}</strong></div>
+        <div><span class="lbl">结余</span><strong class="${t.net >= 0 ? 'inc' : 'exp'}">${U.money(t.net)}</strong></div>
+      </div>
+    </section>
+    ${rows.length ? [...groups.entries()].map(([date, list]) => `
+      <section class="card day-group">
+        <div class="day-head">
+          <span>${this.dateLabel(date)}</span>
+          <span class="muted">${U.money(A.totals(list).expense)}</span>
+        </div>
+        ${this.viewTxList(list)}
+      </section>`).join('') : '<div class="empty">这个月还没有账目</div>'}
+    <div class="row-gap">
+      <button class="btn ghost block" data-act="export-csv">导出这个月的 Excel（CSV）</button>
+    </div>`;
+  }
+
+  viewTxList(rows, { compact = false } = {}) {
+    if (!rows || !rows.length) return '<p class="empty small">还没有记录</p>';
+    const cmap = A.categoryMap(this.categories);
+    return `<ul class="txlist">${rows.map((tx) => {
+      const cat = tx.category_id ? cmap.get(tx.category_id) : null;
+      const meta = KIND_MAP[tx.kind] || KIND_MAP.expense;
+      const isExpense = tx.kind === 'expense' || tx.kind === 'reimburse_back';
+      const label = cat ? cat.name : meta.name;
+      const creator = this.memberName(tx.created_by);
+      const owner = this.memberName(tx.member_id);
+      const who = owner && owner !== creator ? `${owner} / ${creator}记` : owner || (creator ? `${creator}记` : '');
+      return `<li class="tx" data-act="edit-tx" data-id="${tx.id}">
+        <span class="tx-icon">${cat?.icon || (isExpense ? '💸' : '💵')}</span>
+        <span class="tx-main">
+          <span class="tx-title">${U.escapeHtml(label)}${tx.note ? ` · ${U.escapeHtml(tx.note)}` : ''}</span>
+          <span class="tx-sub">${U.escapeHtml(who)}${tx.reimbursable ? ' · 待报销' : ''}${meta.counted === false ? ' · 不计收支' : ''}</span>
+        </span>
+        <span class="tx-amount ${isExpense ? 'exp' : 'inc'}">${isExpense ? '-' : '+'}${U.money(tx.amount).replace('¥', '')}</span>
+        ${compact ? '' : `<button class="tx-del" data-act="delete-tx" data-id="${tx.id}" title="删除">×</button>`}
+      </li>`;
+    }).join('')}</ul>`;
+  }
+
+  dateLabel(iso) {
+    const today = U.todayISO();
+    if (iso === today) return '今天';
+    if (iso === U.dateToISO(new Date(Date.now() - 86400000))) return '昨天';
+    const d = U.isoToDate(iso);
+    const week = '日一二三四五六'[d.getDay()];
+    return `${d.getMonth() + 1}月${d.getDate()}日 周${week}`;
+  }
+
+  /* ---- 统计页 ---- */
+
+  viewStats() {
+    const month = this.month;
+    const rows = this.txOfMonth(month);
+    const prevMonth = U.shiftMonth(month, -1);
+    const prevRows = this.txOfMonth(prevMonth);
+    const t = A.totals(rows);
+    const cmp = A.compareWithPrev(rows, prevRows);
+    const expCats = A.byCategory(rows, this.categories, 'expense');
+    const incCats = A.byCategory(rows, this.categories, 'income');
+    const membersRows = A.byMember(rows, this.members, 'expense');
+    const months = U.lastMonths(6, month);
+    const trend = A.byMonth(this.txInRange(U.monthRange(months[0]).from, U.monthRange(month).to), months);
+    const budgets = A.budgetStatus(this.budgets, this.txOfMonth(this.budgetMonth), this.categories, CONFIG.budgetWarnRatio);
+    const donutTotal = expCats.reduce((a, b) => a + b.total, 0);
+
+    return `
+    <section class="card">
+      <div class="month-nav">
+        <button class="btn icon" data-act="month-prev">‹</button>
+        <div class="month-title">${month.replace('-', ' 年 ')} 月</div>
+        <button class="btn icon" data-act="month-next">›</button>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi"><span>支出</span><strong class="exp">${U.money(t.expense)}</strong>
+          <em class="${cmp.expense.pct > 0 ? 'up' : 'down'}">${this.pctText(cmp.expense.pct)}</em></div>
+        <div class="kpi"><span>收入</span><strong class="inc">${U.money(t.income)}</strong>
+          <em class="${cmp.income.pct > 0 ? 'up' : 'down'}">${this.pctText(cmp.income.pct)}</em></div>
+        <div class="kpi"><span>结余</span><strong>${U.money(t.net)}</strong>
+          <em class="${cmp.net.pct > 0 ? 'up' : 'down'}">${this.pctText(cmp.net.pct)}</em></div>
+      </div>
+      <p class="fineprint">同比上一月（${prevMonth}）。带「不计收支」的转账、借还款已排除在合计之外。</p>
+    </section>
+
+    <section class="card">
+      <h2>支出构成</h2>
+      <div class="donut-wrap">
+        ${donutChart(expCats, { size: 168, total: donutTotal })}
+        ${legend(expCats.slice(0, 6), donutTotal)}
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>近 6 个月趋势</h2>
+      ${groupedBars(trend.map((m) => ({
+        label: m.month.slice(5) + '月',
+        values: [m.income, m.expense],
+      })), { height: 150 })}
+      <div class="chart-legend">
+        <span><i style="background:#22c55e"></i>收入</span>
+        <span><i style="background:#f87171"></i>支出</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>按人员</h2>
+      ${horizontalBars(membersRows.map((m) => ({
+        label: m.name, value: m.total, display: U.money(m.total),
+      })))}
+    </section>
+
+    <section class="card">
+      <h2>收入构成</h2>
+      ${horizontalBars(incCats.map((c) => ({
+        label: c.fullName, value: c.total, display: U.money(c.total),
+      })), { colors: ['#22c55e', '#16a34a', '#4ade80', '#15803d'] })}
+    </section>
+
+    <section class="card">
+      <div class="row-between"><h2>预算</h2>
+        <span class="muted">${this.budgetMonth}</span></div>
+      ${budgets.length ? `<ul class="budget-list">${budgets.map((b) => `
+        <li class="budget ${b.state}">
+          <div class="b-head"><span>${b.icon} ${U.escapeHtml(b.name)}</span>
+            <span>${U.money(b.used)} / ${U.money(b.amount)}</span></div>
+          <div class="b-track"><div class="b-fill" style="width:${Math.min(100, b.ratio * 100).toFixed(1)}%"></div></div>
+          <div class="b-foot">${b.state === 'over'
+    ? `已超支 ${U.money(Math.abs(b.remaining))}`
+    : `还剩 ${U.money(b.remaining)}`}</div>
+        </li>`).join('')}</ul>` : '<p class="empty small">还没设预算，去「我的」里设一个</p>'}
+    </section>`;
+  }
+
+  pctText(pct) {
+    if (!pct) return '持平';
+    return `${pct > 0 ? '↑' : '↓'}${Math.abs(pct)}%`;
+  }
+
+  /* ---- 我的 ---- */
+
+  viewMe() {
+    const me = this.myMember;
+    const family = this.store.family;
+    const list = this.categories;
+    const parents = list.filter((c) => !c.parent_id);
+    return `
+    <section class="card">
+      <h2>家庭</h2>
+      <div class="kv"><span>名称</span><strong>${U.escapeHtml(family?.name || '')}</strong></div>
+      <div class="kv"><span>邀请码</span>
+        <strong class="invite">${U.escapeHtml(family?.invite_code || '')}</strong>
+        <button class="link" data-act="copy-invite">复制</button>
+      </div>
+      <p class="fineprint">家人各自注册账号，在「邀请码加入」里输入这 6 位码，就能看到同一本账。</p>
+      <div class="members">${this.members.map((m) => `
+        <span class="chip">${U.escapeHtml(m.display_name)}<em>${ROLE_MAP[m.role] || ''}</em></span>`).join('')}
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>我的资料</h2>
+      <div class="grid2">
+        <label class="field"><span>称呼</span>
+          <input id="profile-name" type="text" value="${U.escapeHtml(me?.display_name || '')}">
+        </label>
+        <label class="field"><span>身份</span>
+          <select id="profile-role">
+            ${ROLES.map((r) => `<option value="${r.key}" ${me?.role === r.key ? 'selected' : ''}>${r.name}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <button class="btn primary" data-act="save-profile">保存</button>
+    </section>
+
+    <section class="card">
+      <div class="row-between"><h2>预算</h2>
+        <div class="month-nav small">
+          <button class="btn icon" data-act="budget-month-prev">‹</button>
+          <span>${this.budgetMonth}</span>
+          <button class="btn icon" data-act="budget-month-next">›</button>
+        </div>
+      </div>
+      <label class="field"><span>本月总预算（留空或 0 表示不设）</span>
+        <input type="number" inputmode="decimal" data-budget-input="" value="${this.budgetValue(null)}" placeholder="0">
+      </label>
+      <p class="fineprint">也可以按分类设预算，用完 80% 会提醒，超了首页和统计页会标红。</p>
+      <details class="cat-budget">
+        <summary>按分类设预算</summary>
+        ${parents.map((p) => `<label class="field"><span>${p.icon || ''} ${U.escapeHtml(p.name)}</span>
+          <input type="number" inputmode="decimal" data-budget-input="${p.id}" value="${this.budgetValue(p.id)}" placeholder="0">
+        </label>`).join('')}
+      </details>
+      <button class="btn primary" data-act="save-budget">保存预算</button>
+    </section>
+
+    <section class="card">
+      <div class="row-between"><h2>分类管理</h2>
+        <button class="link" data-act="toggle-cat-manager">${this.showCategoryManager ? '收起' : '展开'}</button></div>
+      ${this.showCategoryManager ? `
+        <div class="grid2">
+          <label class="field"><span>名称</span><input id="new-cat-name" type="text" placeholder="比如：宠物"></label>
+          <label class="field"><span>收支</span>
+            <select id="new-cat-kind"><option value="expense">支出</option><option value="income">收入</option></select>
+          </label>
+          <label class="field span2"><span>挂在大类下（可不选）</span>
+            <select id="new-cat-parent"><option value="">作为大类</option>
+              ${parents.filter((p) => p.kind === 'expense').map((p) => `<option value="${p.id}">${U.escapeHtml(p.name)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="field span2"><span>识别关键词（逗号分隔，用于自动分类）</span>
+            <input id="new-cat-words" type="text" placeholder="狗粮,猫砂,宠物医院">
+          </label>
+        </div>
+        <button class="btn primary" data-act="add-category">添加分类</button>
+        <ul class="catlist">${parents.map((p) => {
+    const kids = list.filter((c) => c.parent_id === p.id);
+    return `<li>
+            <span class="cat-name">${p.icon || ''} ${U.escapeHtml(p.name)}<em>${p.kind === 'income' ? '收入' : '支出'}</em></span>
+            <button class="tx-del" data-act="delete-category" data-id="${p.id}">×</button>
+            ${kids.length ? `<ul class="subcats">${kids.map((c) => `
+              <li><span>${U.escapeHtml(c.name)}</span>
+                <button class="tx-del" data-act="delete-category" data-id="${c.id}">×</button></li>`).join('')}</ul>` : ''}
+          </li>`;
+  }).join('')}</ul>` : ''}
+    </section>
+
+    <section class="card">
+      <h2>数据</h2>
+      <div class="row-gap">
+        <button class="btn ghost" data-act="export-csv">导出本月 Excel（CSV）</button>
+        ${this.isDemo ? '<button class="btn ghost" data-act="reset-demo">重置演示数据</button>' : ''}
+        <button class="btn ghost" data-act="signout">${this.isDemo ? '退出演示' : '退出登录'}</button>
+      </div>
+      ${this.isDemo ? `<p class="fineprint">当前是演示模式：数据只存在这台设备的浏览器里，换设备看不到。
+        填好 <code>src/config.js</code> 里的 Supabase 地址和 key 后，就会自动切换成多人共享的真实账本。</p>` : ''}
+      <p class="fineprint">账号：${U.escapeHtml(this.store.session?.user?.email || '本机演示')}</p>
+    </section>`;
+  }
+
+  budgetValue(categoryId) {
+    const row = this.budgets.find((b) => (b.category_id || null) === (categoryId || null));
+    return row ? String(Number(row.amount)) : '';
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
+export async function mount(root) {
+  const store = createStore(CONFIG);
+  const app = new App(root, store);
+  await app.init();
+  return app;
+}
+
+export { App };
