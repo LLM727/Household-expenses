@@ -219,12 +219,31 @@ export class RemoteStore {
     const filters = {};
     if (from) filters.occurred_on = `gte.${from}`;
     if (to) filters.and = `(occurred_on.lte.${to})`;
-    const rows = await this.client.table('transactions', {
-      select: '*',
-      filters,
-      order: 'occurred_on.desc,created_at.desc',
-    });
-    return rows || [];
+    // Supabase（PostgREST）单次最多返回 1000 行，超出的部分**静默截断、不报错**。
+    // 所以必须自己翻页，否则记满 1000 笔之后，账户余额和统计会悄悄变少。
+    //
+    // 两个细节：
+    // 1) order 末尾带 id：排序键相同（同一天、同一秒记的账）时，没有唯一键翻页会重复或漏行；
+    // 2) 用「直到拿到空页」作为结束条件，而不是「这页不满 pageSize」——后者在服务端
+    //    max-rows 配置比 1000 更小时会误判成到底了。代价是每次多一个很小的请求。
+    const pageSize = 1000;
+    const maxPages = 200; // 20 万行，够一个家庭记几十年；同时防止服务端忽略 offset 时死循环
+    const out = [];
+    let offset = 0;
+    for (let page = 0; page < maxPages; page += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const rows = await this.client.table('transactions', {
+        select: '*',
+        filters,
+        order: 'occurred_on.desc,created_at.desc,id.desc',
+        limit: pageSize,
+        offset,
+      });
+      if (!rows || !rows.length) return out;
+      out.push(...rows);
+      offset += rows.length;
+    }
+    return out;
   }
 
   async addTransaction(tx) {

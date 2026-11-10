@@ -199,17 +199,19 @@ export class SupabaseClient {
    * @param {object} [opts.filters] 形如 { family_id: 'eq.xxx', occurred_on: 'gte.2026-01-01' }
    * @param {string} [opts.order]   形如 'occurred_on.desc'
    * @param {number} [opts.limit]
+   * @param {number} [opts.offset]
    * @param {string} [opts.method]
    * @param {any}    [opts.body]
    * @param {string} [opts.prefer]  例如 'return=representation'
    */
   async table(tableName, opts = {}) {
     await this.ensureFresh();
-    const { select, filters = {}, order, limit, method = 'GET', body, prefer } = opts;
+    const { select, filters = {}, order, limit, offset, method = 'GET', body, prefer } = opts;
     const query = { ...filters };
     if (select) query.select = select;
     if (order) query.order = order;
     if (limit) query.limit = String(limit);
+    if (offset) query.offset = String(offset);
 
     const extraHeaders = {};
     if (prefer) extraHeaders.Prefer = prefer;

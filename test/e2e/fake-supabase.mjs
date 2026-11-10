@@ -71,9 +71,11 @@ function ident(name) {
   return `"${name}"`;
 }
 
+/** Supabase（PostgREST）单次响应最多给这么多行，超出的静默截断 */
+const MAX_ROWS = Number(process.env.FAKE_SUPABASE_MAX_ROWS || 1000);
+
 /** PostgREST 的过滤语法 → SQL 条件 */
-function buildWhere(params) {
-  const RESERVED = new Set(['select', 'order', 'limit', 'offset', 'on_conflict', 'columns']);
+function buildWhere(params) {  const RESERVED = new Set(['select', 'order', 'limit', 'offset', 'on_conflict', 'columns']);
   const parts = [];
 
   const one = (column, expr) => {
@@ -309,9 +311,12 @@ export async function startFakeSupabase({ silent = true } = {}) {
       const uid = uidFromRequest(req);
 
       if (req.method === 'GET') {
-        const sql = `select ${buildColumns(select)} from public.${ident(table)}${buildWhere(params)}${buildOrder(order)}${
-          limit ? ` limit ${Number(limit)}` : ''
-        }`;
+        // 模仿真 PostgREST：不带 limit 也只给 max-rows 条（Supabase 默认 1000），
+        // 而且**静默截断**、HTTP 200。这不是我加戏，真服务就是这样——客户端必须自己翻页。
+        const offset = Number(url.searchParams.get('offset') || 0);
+        const asked = limit ? Number(limit) : MAX_ROWS;
+        const effective = Math.min(Number.isFinite(asked) ? asked : MAX_ROWS, MAX_ROWS);
+        const sql = `select ${buildColumns(select)} from public.${ident(table)}${buildWhere(params)}${buildOrder(order)} limit ${effective} offset ${offset}`;
         const result = await withRole(uid, () => db.query(sql));
         return sendJson(res, 200, result.rows);
       }
