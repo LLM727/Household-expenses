@@ -97,6 +97,12 @@ export class SupabaseClient {
     }
 
     if (!res.ok) {
+      // 401 说明服务器不认这个 token（过期/被吊销/服务器时钟偏差）。
+      // 这里顺手把本地会话清掉，界面下一次渲染就会回到登录页；
+      // 否则用户会一直看到「加载失败」，却不知道该怎么办。
+      if (res.status === 401 && auth && this.session) {
+        this._writeSession(null);
+      }
       const message =
         data?.msg || data?.message || data?.error_description || data?.error || `请求失败（HTTP ${res.status}）`;
       throw new SupabaseError(message, {
@@ -184,8 +190,16 @@ export class SupabaseClient {
     if (this.session.expires_at && Date.now() >= this.session.expires_at) {
       try {
         await this.refresh();
-      } catch {
+      } catch (err) {
+        // 续期失败（refresh_token 也失效了）：清掉本地会话，并且**必须抛错**。
+        // 不抛的话，后面的请求会以匿名身份发出去，行级权限让它一行也查不到，
+        // 界面就显示「这个月还没有账目」——用户会以为账本被清空了。
+        // 报错 + 回到登录页，才是正确的表现。
         this._writeSession(null);
+        throw new SupabaseError('登录已过期，请重新登录', {
+          code: 'session_expired',
+          details: { reason: err?.message || String(err) },
+        });
       }
     }
   }

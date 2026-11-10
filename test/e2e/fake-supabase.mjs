@@ -194,6 +194,7 @@ export async function startFakeSupabase({ silent = true } = {}) {
 
   const usersByEmail = new Map(); // email -> { id, password }
   const tokens = new Map(); // token -> uid
+  const ANON_KEY = 'fake-anon-key';
 
   function issueTokens(email) {
     const user = usersByEmail.get(email);
@@ -210,10 +211,21 @@ export async function startFakeSupabase({ silent = true } = {}) {
     };
   }
 
-  function uidFromRequest(req) {
+  /**
+   * 和真 PostgREST 一致：anon key 合法（以匿名身份放行），
+   * 但**认不出来的 Bearer token 要返回 401**（真服务就是这样，不会当成匿名用户放过去）。
+   */
+  function tokenInfo(req) {
     const auth = req.headers.authorization || '';
     const token = auth.replace(/^Bearer\s+/i, '').trim();
-    return tokens.get(token) || null;
+    if (!token || token === ANON_KEY) return { role: 'anon', uid: null };
+    const uid = tokens.get(token);
+    if (uid) return { role: 'user', uid };
+    return { role: 'invalid', uid: null };
+  }
+
+  function uidFromRequest(req) {
+    return tokenInfo(req).uid;
   }
 
   // PGlite 是单连接，请求必须串行，否则 set role / set_config 会互相串
@@ -292,7 +304,9 @@ export async function startFakeSupabase({ silent = true } = {}) {
       const body = (await readBody(req)) || {};
       const keys = Object.keys(body);
       const args = keys.map((k) => `${ident(k)} := ${lit(body[k])}`).join(', ');
-      const uid = uidFromRequest(req);
+      const info = tokenInfo(req);
+      if (info.role === 'invalid') return sendJson(res, 401, { message: 'JWT expired', code: 'PGRST301' });
+      const uid = info.uid;
       const result = await withRole(uid, () => db.query(`select * from public.${ident(fn)}(${args})`));
       // PostgREST：返回复合类型时，响应体是单个对象（不是数组）
       return sendJson(res, 200, result.rows[0] ?? null);
@@ -308,7 +322,9 @@ export async function startFakeSupabase({ silent = true } = {}) {
       const limit = url.searchParams.get('limit');
       const prefer = String(req.headers.prefer || '');
       const wantsRows = /return=representation/i.test(prefer);
-      const uid = uidFromRequest(req);
+      const info = tokenInfo(req);
+      if (info.role === 'invalid') return sendJson(res, 401, { message: 'JWT expired', code: 'PGRST301' });
+      const uid = info.uid;
 
       if (req.method === 'GET') {
         // 模仿真 PostgREST：不带 limit 也只给 max-rows 条（Supabase 默认 1000），
@@ -364,7 +380,7 @@ export async function startFakeSupabase({ silent = true } = {}) {
 
   return {
     url: `http://127.0.0.1:${port}`,
-    anonKey: 'fake-anon-key',
+    anonKey: ANON_KEY,
     db,
     async close() {
       await new Promise((resolve) => server.close(resolve));
