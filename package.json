@@ -8,7 +8,7 @@
     "test": "node test/parse.test.mjs && node test/analytics.test.mjs && node test/accounts.test.mjs && node test/remote.test.mjs && node test/check.test.mjs && node test/ui.test.mjs",
     "check": "node tools/check-config.js",
     "check:assets": "node tools/check-assets.js",
-    "test:e2e": "node test/e2e/remote-store.test.mjs",
+    "test:e2e": "node test/e2e/remote-store.test.mjs && node test/e2e/app-flow.test.mjs",
     "serve": "node tools/serve.js"
   }
 }
