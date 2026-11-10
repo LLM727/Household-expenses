@@ -205,6 +205,58 @@ test('服务端错误会变成带 message 的 SupabaseError', async () => {
   });
 });
 
+/* ---------- 网络不稳的时候：错误提示必须是「人话」，而且是能照做的 ---------- */
+
+test('断网时提示「检查 Wi-Fi」，不把 Failed to fetch 丢给用户', async () => {
+  const f = makeFetch(() => new TypeError('Failed to fetch'));
+  const client = newClient(f);
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true });
+  try {
+    await assert.rejects(() => client.signIn('a@b.com', 'x'), (err) => {
+      assert.ok(err instanceof SupabaseError, '应该是 SupabaseError');
+      assert.equal(err.code, 'network');
+      assert.match(err.message, /没联网|Wi-Fi/, `提示不对：${err.message}`);
+      assert.doesNotMatch(err.message, /Failed to fetch/, '别把原始英文错误丢给用户');
+      return true;
+    });
+  } finally {
+    if (desc) Object.defineProperty(globalThis, 'navigator', desc);
+    else delete globalThis.navigator;
+  }
+});
+
+test('浏览器说在线但连不上：提示换个网络再试', async () => {
+  const f = makeFetch(() => new TypeError('Failed to fetch'));
+  const client = newClient(f);
+  await assert.rejects(() => client.signIn('a@b.com', 'x'), (err) => {
+    assert.equal(err.code, 'network');
+    assert.match(err.message, /连不上服务器|换个网络/, `提示不对：${err.message}`);
+    return true;
+  });
+});
+
+test('服务器一直不回应：20 秒超时，给出「稍后再试」而不是一直转圈', async () => {
+  // 模拟一个永远不回应的服务器，但能被中止信号打断（真实 fetch 就是这个行为）
+  const f = (url, init = {}) =>
+    new Promise((resolve, reject) => {
+      const signal = init.signal;
+      if (!signal) return;
+      if (signal.aborted) reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      signal.addEventListener('abort', () =>
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    });
+  const client = newClient(f);
+  const started = Date.now();
+  await assert.rejects(() => client.table('transactions', { select: 'id' }), (err) => {
+    assert.equal(err.code, 'timeout', `应该是超时错误，实际：${err.code}`);
+    assert.match(err.message, /没回应|稍后再试/, `提示不对：${err.message}`);
+    return true;
+  });
+  const cost = Date.now() - started;
+  assert.ok(cost < 30000, `超时没生效，等了 ${cost}ms`);
+});
+
 test('RemoteStore：建家后自动写入默认分类与账户', async () => {
   const state = {
     familyId: 'fam-1',

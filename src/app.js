@@ -712,6 +712,8 @@ class App {
 
   _friendly(err) {
     const raw = err?.message || String(err);
+    // store.js / supabase.js 已经把网络类错误换成人话了，直接用它那句，别再翻一遍
+    if (err?.code === 'network' || err?.code === 'timeout') return raw;
     if (/Invalid login credentials/i.test(raw)) return '邮箱或密码不对';
     if (/User already registered/i.test(raw)) return '这个邮箱已经注册过了，直接登录吧';
     if (/email.*not.*confirmed/i.test(raw)) return '邮箱还没确认，请先点邮件里的链接（或在 Supabase 关掉「Confirm email」）';

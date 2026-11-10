@@ -28,6 +28,25 @@ function buildQuery(filters) {
   return qs ? `?${qs}` : '';
 }
 
+/**
+ * 没有网络、域名解析不了、请求被中断（断网、切后台回来、机场 Wi-Fi 掉线）时，
+ * fetch 抛出来的是 TypeError: Failed to fetch —— 这句话给家里人看等于没说。
+ * 换成能照做的说法，并把原因留在 details 里，排查时还能看到。
+ */
+function friendlyNetworkError(err) {
+  const offline = globalThis.navigator && globalThis.navigator.onLine === false;
+  const timedOut = err?.name === 'AbortError';
+  const message = timedOut
+    ? '服务器 20 秒没回应，可能网络太慢，稍后再试'
+    : offline
+      ? '手机好像没联网，检查一下 Wi-Fi 或流量再试'
+      : '连不上服务器，稍等一下再试（或换个网络）';
+  return new SupabaseError(message, {
+    code: timedOut ? 'timeout' : 'network',
+    details: { reason: err?.message || String(err) },
+  });
+}
+
 export class SupabaseClient {
   constructor({ url, anonKey, storage } = {}) {
     this.url = String(url || '').replace(/\/+$/, '');
@@ -79,12 +98,25 @@ export class SupabaseClient {
     return headers;
   }
 
-  async _request(path, { method = 'GET', body, auth = true, extraHeaders } = {}) {
-    const res = await fetch(`${this.url}${path}`, {
-      method,
-      headers: this._headers({ auth, extra: extraHeaders }),
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+  async _request(path, { method = 'GET', body, auth = true, extraHeaders, timeoutMs = 20000 } = {}) {
+    let res;
+    // 超时：手机上信号差的时候 fetch 会一直挂着，界面就永远停在「正在打开…」。
+    // 与其干等，不如 20 秒后给一句人话，用户至少知道该重试还是换网络。
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      res = await fetch(`${this.url}${path}`, {
+        method,
+        headers: this._headers({ auth, extra: extraHeaders }),
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller ? controller.signal : undefined,
+      });
+    } catch (err) {
+      // 网络层失败：不吞掉、也不原样抛 "Failed to fetch"
+      throw friendlyNetworkError(err);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     const text = await res.text();
     let data = null;

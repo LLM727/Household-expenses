@@ -107,13 +107,13 @@ npm test
 node test/parse.test.mjs      # 自然语言解析（含语音口语）28 项
 node test/analytics.test.mjs  # 统计聚合与分类趋势 12 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
-node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致 + 两实现接口一致 10 项
+node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致 + 断网/超时提示 13 项
 node test/check.test.mjs      # 上线自检的判断逻辑 9 项
 node test/xlsx.test.mjs       # .xlsx 生成（独立实现的解包器 + CRC32 校验）9 项
-node test/ui.test.mjs         # 界面渲染、业务闭环、标签配对、交互接线、导出、语音 19 项
+node test/ui.test.mjs         # 界面渲染、业务闭环、标签配对、交互接线、导出、语音 22 项
 ```
 
-共 95 项，全部离线可跑，不需要真实 Supabase 项目。
+共 101 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 改了数据库结构怎么验
 
@@ -128,6 +128,17 @@ node supabase/validate-schema.mjs
 当前 15 项全过，覆盖「外人读不到别人家的账」「伪造 family_id 写入被挡」「匿名读不到任何家庭」
 「同月预算不能重复」等。平时不用跑，改完 SQL 再跑一次就行。
 
+## 手机上最容易出事的两件事：断网和卡住
+
+一家人记账多半是在手机、在饭桌上、在没有 Wi-Fi 的店里完成的，所以这两种情况必须给出人话：
+
+| 情况 | 用户看到什么 | 为什么不能只报原始错误 |
+|---|---|---|
+| 手机没联网 | 手机好像没联网，检查一下 Wi-Fi 或流量再试 | `TypeError: Failed to fetch` 对家里人等于没说 |
+| 连不上服务器 | 连不上服务器，稍等一下再试（或换个网络） | 分不清是「网断了」还是「服务器挂了」，只能重试 |
+| 服务器 20 秒不回应 | 服务器 20 秒没回应，可能网络太慢，稍后再试 | 不设超时的话，界面会永远停在「正在打开…」，用户只能以为软件坏了 |
+
+三条都有单元测试（`test/remote.test.mjs`），并且验证过：把转换去掉、直接抛原始错误，这三条会立刻变红。
 ## 端到端：让真实代码跑在真 Postgres 上
 
 `test/e2e/` 里有个「假 Supabase」：用 PGlite 跑真 schema.sql，再用 Node 内置 http 复刻
