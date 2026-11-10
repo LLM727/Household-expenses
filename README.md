@@ -39,7 +39,18 @@ src/
 supabase/schema.sql     数据库结构（表 + 行级权限 + 邀请码函数）
 test/                   Node 单元测试（无需安装依赖）
 tools/serve.js          本地预览服务器
+tools/check-config.js   上线自检：填完配置跑一下，逐条告诉你哪里没弄好
 ```
+
+---
+
+## 填完配置先自检
+
+```bash
+node tools/check-config.js
+```
+
+它会真的去问 Supabase：地址对不对、key 对不对、表建了没、**行级权限开没开**（这条最关键，匿名能读到数据就是没开）、建家函数在不在、注册能不能直接用。只读脚本，不写任何数据。
 ---
 
 ## 现在就能看一眼（不用注册任何东西）
@@ -64,10 +75,11 @@ node test/parse.test.mjs      # 自然语言解析 16 项
 node test/analytics.test.mjs  # 统计聚合与分类趋势 12 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
 node test/remote.test.mjs     # Supabase 请求构造（离线假 fetch）8 项
+node test/check.test.mjs      # 上线自检的判断逻辑 9 项
 node test/ui.test.mjs         # 界面渲染与业务闭环 11 项
 ```
 
-共 55 项，全部离线可跑，不需要真实 Supabase 项目。
+共 64 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ---
 
@@ -76,7 +88,7 @@ node test/ui.test.mjs         # 界面渲染与业务闭环 11 项
 详见 [DEPLOY.md](DEPLOY.md)。简版：
 
 1. 在 Supabase 建一个免费项目，把 `supabase/schema.sql` 整段粘进 SQL Editor 执行
-2. 把项目的 URL 和 anon key 填进 `src/config.js`
+2. 把项目的 URL 和 anon key 填进 `src/config.js`，跑 `node tools/check-config.js` 自检
 3. 推送到 GitHub，在仓库 Settings → Pages 里选 `main` 分支根目录
 
 ---

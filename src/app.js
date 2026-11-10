@@ -622,6 +622,21 @@ class App {
     if (/email.*not.*confirmed/i.test(raw)) return '邮箱还没确认，请先点邮件里的链接（或在 Supabase 关掉「Confirm email」）';
     if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) return '网络连不上 Supabase，检查一下地址/网络';
     if (/JWT|token is expired/i.test(raw)) return '登录过期了，请重新登录';
+    // 下面这几条都是「数据库还没按要求建好」的不同表现，说明要明确到能照着做
+    if (/Could not find the table|relation .* does not exist|PGRST205/i.test(raw)) {
+      return '数据库表还没建：去 Supabase 的 SQL Editor 运行 supabase/schema.sql';
+    }
+    if (/Could not find the function|PGRST202/i.test(raw)) {
+      return '数据库函数缺失：schema.sql 没跑完整，请整段重新运行一次';
+    }
+    if (/permission denied|row-level security|42501/i.test(raw)) {
+      return '权限不足：多半是 schema.sql 跑了一半，整段重新运行一次';
+    }
+    if (/rate limit|too many requests|429/i.test(raw)) return '请求太频繁了，等半分钟再试';
+    if (/Signups not allowed|signup.*(disabled|not allowed)/i.test(raw)) {
+      return 'Supabase 里把注册关掉了，去 Authentication → Sign In / Providers 打开';
+    }
+    if (/Password should be at least|password.*(short|6 characters)/i.test(raw)) return '密码太短了，至少 6 位';
     return raw;
   }
 

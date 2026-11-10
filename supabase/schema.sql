@@ -261,6 +261,13 @@ grant execute on function public.create_family(text, text, text) to authenticate
 grant execute on function public.join_family_by_code(text, text, text) to authenticated;
 grant execute on function public.current_family_id() to authenticated;
 
+-- 允许未登录者「调用」这两个函数是有意为之，不是漏洞：
+--   1) 函数第一句就检查 auth.uid()，未登录直接抛「未登录」，做不了任何事；
+--   2) PostgREST 只暴露「当前角色有权执行」的函数，如果没这条授权，
+--      自检脚本（tools/check-config.js）就分不清「函数没建」还是「只是没权限」。
+grant execute on function public.create_family(text, text, text) to anon;
+grant execute on function public.join_family_by_code(text, text, text) to anon;
+
 -- ---------------------------------------------------------------------------
 -- 4. 行级权限（RLS）：每个家庭只能看到自己家的数据
 -- ---------------------------------------------------------------------------
