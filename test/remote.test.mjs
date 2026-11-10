@@ -339,3 +339,30 @@ test('写库字段名都出自 schema.sql（列名写错会被这里抓到）', 
     '没跑到默认账户写入，这个测试白跑了',
   );
 });
+
+function publicMethods(block) {
+  return new Set(
+    [...block.matchAll(/^  (?:async )?([a-z]\w*)\(/gm)]
+      .map((m) => m[1])
+      .filter((name) => name !== 'constructor'),
+  );
+}
+
+test('界面调用的每个 store 方法，两种实现都有', () => {
+  const storeSrc = readFileSync(new URL('../src/store.js', import.meta.url), 'utf8');
+  const appSrc = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+
+  const remoteAt = storeSrc.indexOf('export class RemoteStore');
+  const demoAt = storeSrc.indexOf('class DemoStore');
+  assert.ok(remoteAt > 0 && demoAt > remoteAt, '没找到两个类的定义');
+  const remote = publicMethods(storeSrc.slice(remoteAt, demoAt));
+  const demo = publicMethods(storeSrc.slice(demoAt));
+
+  const used = new Set([...appSrc.matchAll(/this\.store\.([a-zA-Z_]\w*)\s*\(/g)].map((m) => m[1]));
+  assert.ok(used.size >= 10, `只识别到 ${used.size} 个调用，正则可能失效了`);
+
+  const missingRemote = [...used].filter((m) => !remote.has(m));
+  const missingDemo = [...used].filter((m) => !demo.has(m));
+  assert.deepEqual(missingRemote, [], `RemoteStore 缺这些方法（配好 Supabase 后一点就报错）：${missingRemote.join(', ')}`);
+  assert.deepEqual(missingDemo, [], `DemoStore 缺这些方法（演示模式一点就报错）：${missingDemo.join(', ')}`);
+});

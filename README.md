@@ -89,12 +89,12 @@ npm test
 node test/parse.test.mjs      # 自然语言解析 16 项
 node test/analytics.test.mjs  # 统计聚合与分类趋势 12 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
-node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致性 9 项
+node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致 + 两实现接口一致 10 项
 node test/check.test.mjs      # 上线自检的判断逻辑 9 项
 node test/ui.test.mjs         # 界面渲染、业务闭环、标签配对、交互接线 14 项
 ```
 
-共 68 项，全部离线可跑，不需要真实 Supabase 项目。
+共 69 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 改了数据库结构怎么验
 
@@ -120,9 +120,9 @@ npm i --no-save @electric-sql/pglite
 npm run test:e2e
 ```
 
-12 项，覆盖建家→默认分类与账户、按月区间查询、改/删、转账双账户、预算覆盖与清零、
+13 项，覆盖建家→默认分类与账户、按月区间查询、改/删、转账双账户、预算覆盖与清零、
 自定义分类、邀请码加入、错码被拒、外人读不到、两个家庭互相隔开、越家改 family_id 被挡、
-刷新后登录态仍在。
+刷新后登录态仍在、真实数据算统计与图表（合计/分类/账户余额/超支/SVG 不含 NaN）。
 
 **这套测试抓到过一个致命 bug**：建家时往 `accounts` 写了不存在的 `sort` 列，
 真实 Supabase 会整批拒绝——等于「新用户第一次建家必然失败」。假 fetch 什么都收，永远发现不了。

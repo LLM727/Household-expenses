@@ -230,3 +230,47 @@ test('登录态持久化：换一个客户端仍能读写', async () => {
   const rows = await b.fetchTransactions('2026-11-01', '2026-11-30');
   assert.ok(rows.length >= 1);
 });
+
+test('真实库数据 → 统计与图表：合计、分类、余额、预算、SVG 都正常', async () => {
+  const A = await import('../../src/analytics.js');
+  const C = await import('../../src/charts.js');
+
+  // 清掉 11 月已有账目，让数字可控
+  for (const row of await store.fetchTransactions('2026-11-01', '2026-11-30')) {
+    await store.deleteTransaction(row.id);
+  }
+
+  const food = store.categories.find((c) => c.kind === 'expense' && !c.parent_id);
+  const salary = store.categories.find((c) => c.kind === 'income' && !c.parent_id);
+  const bank = store.accounts.find((a) => a.name === '银行卡');
+  const cash = store.accounts.find((a) => a.name === '现金');
+
+  await store.addTransaction({ kind: 'expense', amount: 35.5, occurred_on: '2026-11-03', category_id: food.id, account_id: cash.id, note: '午饭' });
+  await store.addTransaction({ kind: 'expense', amount: 100, occurred_on: '2026-11-04', category_id: food.id, account_id: cash.id, note: '超市' });
+  await store.addTransaction({ kind: 'income', amount: 5000, occurred_on: '2026-11-05', category_id: salary.id, account_id: bank.id, note: '工资' });
+  await store.addTransaction({ kind: 'transfer', amount: 500, occurred_on: '2026-11-06', account_id: bank.id, to_account_id: cash.id, note: '取现' });
+
+  const rows = await store.fetchTransactions('2026-11-01', '2026-11-30');
+  assert.equal(rows.length, 4);
+
+  const t = A.totals(rows);
+  assert.equal(t.expense, 135.5, `支出合计不对：${t.expense}`);
+  assert.equal(t.income, 5000, `收入合计不对：${t.income}`);
+
+  const byCat = A.byCategory(rows, store.categories, 'expense');
+  assert.equal(byCat[0].name, food.name);
+  assert.equal(byCat[0].total, 135.5);
+
+  const balances = A.accountBalances(rows, store.accounts);
+  const cashBal = balances.find((b) => b.name === '现金');
+  const bankBal = balances.find((b) => b.name === '银行卡');
+  assert.equal(cashBal.balance, 364.5, `现金余额不对：${cashBal.balance}`);
+  assert.equal(bankBal.balance, 4500, `银行卡余额不对：${bankBal.balance}`);
+
+  const status = A.budgetStatus([{ category_id: null, amount: 100 }], rows, store.categories);
+  assert.equal(status[0].state, 'over', '超支没被识别出来');
+
+  const donut = C.donutChart(byCat);
+  assert.match(donut, /<svg/, '饼图没生成 SVG');
+  assert.ok(!/NaN/.test(donut), '饼图里出现了 NaN，说明数值没转成数字');
+});
