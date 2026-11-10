@@ -72,7 +72,24 @@ class App {
     this.root.addEventListener('click', this._onRootClick);
     this.root.addEventListener('input', this._onRootInput);
     this.root.addEventListener('change', this._onRootChange);
+    // 手机切回前台时重新拉一次数据。一家人共用一本账，切回来看到的必须是最新的，
+    // 否则会出现「我在自己手机上记了，你那边还是老数字」。顺便也会触发登录续期。
+    const doc = globalThis.document;
+    if (doc && typeof doc.addEventListener === 'function') {
+      this._onVisibilityChange = () => {
+        if (doc.visibilityState === 'hidden') return undefined;
+        return this.refreshAndRender(); // 返回 promise 方便测试等待（事件监听器会忽略返回值）
+      };
+      doc.addEventListener('visibilitychange', this._onVisibilityChange);
+    }
     this._bound = true;
+  }
+
+  /** 重新拉数据并重绘（切回前台、手动刷新都用这个） */
+  async refreshAndRender() {
+    if (!this.loggedIn || !this.hasFamily) return this.render();
+    await this.refreshData();
+    return this.render();
   }
 
   get loggedIn() {
@@ -341,6 +358,7 @@ class App {
   /* ---------------- 认证 ---------------- */
 
   async submitAuth() {
+    if (this.busy) return; // 防重复提交：连点两下注册会发出两次请求
     const email = this.root.querySelector('#auth-email')?.value.trim();
     const password = this.root.querySelector('#auth-password')?.value || '';
     const name = this.root.querySelector('#auth-name')?.value.trim();
@@ -368,6 +386,7 @@ class App {
   }
 
   async submitFamily() {
+    if (this.busy) return; // 防重复提交：连点两下会建出两个家庭
     const familyName = this.root.querySelector('#family-name')?.value.trim() || '我的家';
     const code = this.root.querySelector('#family-code')?.value.trim() || '';
     const displayName = this.root.querySelector('#family-display')?.value.trim() || '我';
@@ -445,6 +464,7 @@ class App {
   }
 
   async saveDraft() {
+    if (this.busy) return; // 防重复提交：双击或手抖点两下，不能记成两笔
     const d = this.draft;
     if (!d) return;
     if (d.amount == null || Number(d.amount) <= 0) return this.showToast('金额要大于 0');
