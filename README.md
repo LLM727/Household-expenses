@@ -11,7 +11,8 @@
 - **图表统计**：支出构成环形图、近 6 个月收支柱状图、按人员排行、分类趋势表（哪一类在涨一眼看出）、环比上一月
 - **报销闭环**：垫付时标记「待报销」，报销回款时选那笔垫付，自动冲减同一分类的支出，不算收入
 - **预算提醒**：总预算与按分类预算，用到 80% 提醒、超支标红
-- **导出 Excel**：按月导出 CSV（带 BOM，Excel 打开中文不乱码）
+- **导出 Excel**：真正的 `.xlsx` 文件（含「明细」+「分类汇总」两个工作表，表头冻结、列宽自适应），
+  另附 CSV（带 BOM）作为纯文本备份。两种都是自己手写的浏览器端生成，不依赖任何库
 
 技术上是**零依赖**的静态网页：没有框架、没有打包、没有 npm 依赖。改一行字推上去，GitHub Pages 自动生效。
 
@@ -33,6 +34,7 @@ src/
   parse.js              自然语言记账解析（金额/日期/类型/分类/人员/备注）
   analytics.js          统计聚合（合计、分类、人员、月度、预算、环比）
   charts.js             手写 SVG 图表
+  xlsx.js               手写 .xlsx 导出（存储式 ZIP + 最小 OOXML，零依赖）
   defaults.js           默认分类与关键词词典
   utils.js              日期/金额/字符串工具
 
@@ -91,10 +93,11 @@ node test/analytics.test.mjs  # 统计聚合与分类趋势 12 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
 node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致 + 两实现接口一致 10 项
 node test/check.test.mjs      # 上线自检的判断逻辑 9 项
-node test/ui.test.mjs         # 界面渲染、业务闭环、标签配对、交互接线 14 项
+node test/xlsx.test.mjs       # .xlsx 生成（独立实现的解包器 + CRC32 校验）9 项
+node test/ui.test.mjs         # 界面渲染、业务闭环、标签配对、交互接线、导出 16 项
 ```
 
-共 69 项，全部离线可跑，不需要真实 Supabase 项目。
+共 80 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 改了数据库结构怎么验
 

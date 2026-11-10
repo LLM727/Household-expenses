@@ -342,3 +342,52 @@ test('每个页面的 HTML 标签都配对', async () => {
   assertBalancedHtml(root.innerHTML, '建家页');
   db.profile = savedProfile;
 });
+
+/* ------------------------------------------------------------------ */
+/* 导出：真的生成文件内容，而不是「点了没报错」                          */
+/* ------------------------------------------------------------------ */
+
+test('导出 Excel：生成合法的 .xlsx（ZIP 头 + 两个工作表 + 中文）', async () => {
+  const { app } = await boot();
+  await app.refreshData();
+  let captured = null;
+  app.download = (blob, filename) => {
+    captured = { blob, filename };
+  };
+
+  await app.exportXlsx();
+  assert.ok(captured, '没有触发下载');
+  assert.match(captured.filename, /^家庭记账-\d{4}-\d{2}\.xlsx$/, `文件名不对：${captured.filename}`);
+
+  const bytes = new Uint8Array(await captured.blob.arrayBuffer());
+  assert.deepEqual([...bytes.subarray(0, 4)], [0x50, 0x4b, 0x03, 0x04], '不是 ZIP 文件头');
+
+  // 存储方式打包，XML 原样可见，直接查内容
+  const text = new TextDecoder().decode(bytes);
+  assert.ok(text.includes('xl/workbook.xml'), '缺少 workbook 部件');
+  assert.ok(text.includes('xl/worksheets/sheet1.xml'), '缺少第一个工作表');
+  assert.ok(text.includes('xl/worksheets/sheet2.xml'), '缺少分类汇总表');
+  assert.ok(text.includes('分类汇总'), '汇总表名没写进去');
+  assert.ok(text.includes('原始输入'), '明细表头没写进去');
+});
+
+test('导出 CSV：带 BOM、表头正确、金额是两位小数', async () => {
+  const { app } = await boot();
+  await app.refreshData();
+  let captured = null;
+  app.download = (blob, filename) => {
+    captured = { blob, filename };
+  };
+
+  await app.exportCsv();
+  assert.ok(captured, '没有触发下载');
+  assert.match(captured.filename, /\.csv$/);
+
+  // Blob.text() 会按规范吃掉 BOM，所以直接看原始字节
+  const bytes = new Uint8Array(await captured.blob.arrayBuffer());
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], '没有 BOM，Excel 打开会乱码');
+
+  const text = new TextDecoder().decode(bytes);
+  assert.ok(text.includes('"日期","类型","金额"'), '表头不对');
+  assert.ok(/"\d+\.\d{2}"/.test(text), '金额不是两位小数');
+});

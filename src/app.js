@@ -9,6 +9,7 @@ import { KINDS, KIND_MAP, ROLES } from './defaults.js';
 import { parseEntry } from './parse.js';
 import * as A from './analytics.js';
 import { donutChart, legend, groupedBars, horizontalBars } from './charts.js';
+import { buildXlsx } from './xlsx.js';
 import * as U from './utils.js';
 
 const ROLE_MAP = Object.fromEntries(ROLES.map((r) => [r.key, r.name]));
@@ -324,6 +325,8 @@ class App {
         return this.saveBudget();
       case 'export-csv':
         return this.exportCsv();
+      case 'export-xlsx':
+        return this.exportXlsx();
       case 'reset-demo':
         if (!confirm('重置演示数据？本机改动会全部丢掉。')) return;
         this.store.resetDemo();
@@ -558,38 +561,80 @@ class App {
 
   /* ---------------- 导出 ---------------- */
 
-  exportCsv() {
-    const month = this.month;
-    const rows = this.txOfMonth(month).sort((a, b) => (a.occurred_on < b.occurred_on ? -1 : 1));
-    if (!rows.length) return this.showToast('这个月没有账目可导出');
+  /** 导出用的行数据（明细表），CSV 和 xlsx 共用，避免两边格式跑偏 */
+  exportRows(month) {
+    const source = this.txOfMonth(month).sort((a, b) => (a.occurred_on < b.occurred_on ? -1 : 1));
+    if (!source.length) return null;
     const cmap = A.categoryMap(this.categories);
     const header = ['日期', '类型', '金额', '分类', '人员', '备注', '记账人', '可报销', '原始输入'];
-    const lines = [header.join(',')];
-    for (const tx of rows) {
+    const rows = source.map((tx) => {
       const cat = tx.category_id ? cmap.get(tx.category_id) : null;
-      const cells = [
+      return [
         tx.occurred_on,
         KIND_MAP[tx.kind]?.name || tx.kind,
-        Number(tx.amount).toFixed(2),
+        Number(tx.amount),
         cat ? cat.fullName : '',
         this.memberName(tx.member_id),
         tx.note || '',
         this.memberName(tx.created_by),
         tx.reimbursable ? '是' : '',
         tx.raw_input || '',
-      ].map((c) => `"${String(c).replace(/"/g, '""')}"`);
-      lines.push(cells.join(','));
-    }
-    // 加 BOM，Excel 打开中文不乱码
-    const blob = new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' });
+      ];
+    });
+    return { source, header, rows };
+  }
+
+  download(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `家庭记账-${month}.csv`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  exportCsv() {
+    const month = this.month;
+    const data = this.exportRows(month);
+    if (!data) return this.showToast('这个月没有账目可导出');
+    const lines = [data.header.map((c) => `"${c}"`).join(',')];
+    for (const row of data.rows) {
+      const cells = row.map((c) => `"${String(typeof c === 'number' ? c.toFixed(2) : c).replace(/"/g, '""')}"`);
+      lines.push(cells.join(','));
+    }
+    // 加 BOM，Excel 打开中文不乱码
+    this.download(
+      new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' }),
+      `家庭记账-${month}.csv`,
+    );
+    return undefined;
+  }
+
+  exportXlsx() {
+    const month = this.month;
+    const data = this.exportRows(month);
+    if (!data) return this.showToast('这个月没有账目可导出');
+
+    // 第二个工作表：按分类汇总（口径和统计页一致——特殊类型不计入收支）
+    const toRows = (list, label) => list.map((c) => [c.fullName || c.name, label, c.total]);
+    const summary = [
+      ['分类', '收支', '金额'],
+      ...toRows(A.byCategory(data.source, this.categories, 'expense'), '支出'),
+      ...toRows(A.byCategory(data.source, this.categories, 'income'), '收入'),
+    ];
+    const totals = A.totals(data.source);
+    summary.push(['合计', '支出', totals.expense], ['合计', '收入', totals.income]);
+
+    const bytes = buildXlsx([
+      { name: `${month} 明细`, rows: [data.header, ...data.rows] },
+      { name: '分类汇总', rows: summary },
+    ]);
+    this.download(
+      new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      `家庭记账-${month}.xlsx`,
+    );
     return undefined;
   }
 
@@ -938,7 +983,8 @@ class App {
         ${this.viewTxList(list)}
       </section>`).join('') : '<div class="empty">这个月还没有账目</div>'}
     <div class="row-gap">
-      <button class="btn ghost block" data-act="export-csv">导出这个月的 Excel（CSV）</button>
+      <button class="btn primary block" data-act="export-xlsx">导出这个月的 Excel（.xlsx）</button>
+      <button class="btn ghost block" data-act="export-csv">导出 CSV（纯文本备份）</button>
     </div>`;
   }
 
@@ -1191,7 +1237,8 @@ class App {
     <section class="card">
       <h2>数据</h2>
       <div class="row-gap">
-        <button class="btn ghost" data-act="export-csv">导出本月 Excel（CSV）</button>
+        <button class="btn ghost" data-act="export-xlsx">导出本月 Excel（.xlsx）</button>
+        <button class="btn ghost" data-act="export-csv">导出本月 CSV</button>
         ${this.isDemo ? '<button class="btn ghost" data-act="reset-demo">重置演示数据</button>' : ''}
         <button class="btn ghost" data-act="signout">${this.isDemo ? '退出演示' : '退出登录'}</button>
       </div>
