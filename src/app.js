@@ -110,6 +110,18 @@ class App {
     return [...this.cache.values()].filter((t) => t.occurred_on >= from && t.occurred_on <= to);
   }
 
+  /** 账户余额要看全部历史，单独拉一次并记住已拉过 */
+  async ensureFullHistory() {
+    if (this.fullLoaded || !this.hasFamily) return;
+    try {
+      const rows = await this.store.fetchTransactions('2000-01-01', U.todayISO());
+      for (const row of rows) this.cache.set(row.id, row);
+      this.fullLoaded = true;
+    } catch (err) {
+      this.showToast(this._friendly(err));
+    }
+  }
+
   get categories() {
     return this.store.categories || [];
   }
@@ -165,6 +177,10 @@ class App {
       this.draft.categoryId = el.value || null;
     } else if (field === 'memberId') {
       this.draft.memberId = el.value || null;
+    } else if (field === 'accountId') {
+      this.draft.accountId = el.value || null;
+    } else if (field === 'toAccountId') {
+      this.draft.toAccountId = el.value || null;
     }
   }
 
@@ -203,6 +219,7 @@ class App {
       case 'tab': {
         this.tab = btn.dataset.tab;
         if (this.tab === 'stats' || this.tab === 'list') await this.refreshData();
+        if (this.tab === 'me') await this.ensureFullHistory();
         return this.render();
       }
       case 'month-prev':
@@ -384,11 +401,13 @@ class App {
     const draft = parseEntry(text, {
       today: U.todayISO(),
       members: this.members,
+      accounts: this.store.accounts || [],
       categories: this.categories.map((c) => {
         const full = this.categoryById(c.id);
         return { ...c, parentName: full?.parentName || null, fullName: full?.fullName || c.name };
       }),
     });
+    draft.accountId = draft.fromAccountId || null;
     // 默认人员：当前登录人
     if (!draft.memberId && this.myMember) {
       draft.memberId = this.myMember.id;
@@ -780,6 +799,16 @@ class App {
             ${this.members.map((m) => `<option value="${m.id}" ${d.memberId === m.id ? 'selected' : ''}>${U.escapeHtml(m.display_name)}</option>`).join('')}
           </select>
         </label>
+        ${d.kind === 'transfer' ? `
+        <label class="field"><span>转出账户</span>
+          <select data-bind="draft" data-field="accountId">${this.accountOptions(d.accountId)}</select>
+        </label>
+        <label class="field"><span>转入账户</span>
+          <select data-bind="draft" data-field="toAccountId">${this.accountOptions(d.toAccountId)}</select>
+        </label>` : `
+        <label class="field span2"><span>账户（可不选）</span>
+          <select data-bind="draft" data-field="accountId">${this.accountOptions(d.accountId)}</select>
+        </label>`}
         ${showCategory ? `
         <label class="field span2"><span>分类</span>
           <select data-bind="draft" data-field="categoryId">
@@ -799,8 +828,16 @@ class App {
     </div>`;
   }
 
-  categoryOptions(kind, selectedId) {
-    const list = this.categories.filter((c) => c.kind === kind);
+  accountOptions(selectedId) {
+    const accounts = this.store.accounts || [];
+    const opts = ['<option value="">不指定</option>'];
+    for (const a of accounts) {
+      opts.push(`<option value="${a.id}" ${selectedId === a.id ? 'selected' : ''}>${U.escapeHtml(a.name)}</option>`);
+    }
+    return opts.join('');
+  }
+
+  categoryOptions(kind, selectedId) {    const list = this.categories.filter((c) => c.kind === kind);
     const parents = list.filter((c) => !c.parent_id);
     const opts = [];
     for (const p of parents) {
@@ -993,6 +1030,19 @@ class App {
       <div class="members">${this.members.map((m) => `
         <span class="chip">${U.escapeHtml(m.display_name)}<em>${ROLE_MAP[m.role] || ''}</em></span>`).join('')}
       </div>
+    </section>
+
+    <section class="card">
+      <h2>账户余额</h2>
+      ${(() => {
+    const balances = A.accountBalances([...this.cache.values()], this.store.accounts || []);
+    if (!balances.length) return '<p class="empty small">还没有账户</p>';
+    return `<ul class="acctlist">${balances.map((a) => `
+          <li><span>${U.escapeHtml(a.name)}</span>
+            <strong class="${a.balance < 0 ? 'exp' : ''}">${U.money(a.balance)}</strong></li>`).join('')}</ul>`;
+  })()}
+      <p class="fineprint">余额按账目推算（初始为 0）。转账会同时扣转出账户、加转入账户；
+        借出/借入、报销回款也会动对应账户，但都不计入家庭收支合计。</p>
     </section>
 
     <section class="card">

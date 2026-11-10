@@ -292,6 +292,55 @@ export function matchMember(text, members) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 账户                                                               */
+/* ------------------------------------------------------------------ */
+
+const FROM_HINT = /(从|由|用|从银行卡|转出|取出)/;
+const TO_HINT = /(到|进|转到|转入|存到|存入|打到)/;
+
+/**
+ * 从原话里认账户，例如「从银行卡转账500到微信」。
+ * @param {string} text
+ * @param {Array<{id:string,name:string}>} accounts
+ * @returns {{fromAccountId?:string, toAccountId?:string, spans:Array}|null}
+ */
+export function matchAccounts(text, accounts) {
+  if (!accounts || !accounts.length) return null;
+  const hits = [];
+  for (const acc of accounts) {
+    if (!acc?.name) continue;
+    const idx = text.indexOf(acc.name);
+    if (idx < 0) continue;
+    hits.push({ acc, idx, len: acc.name.length });
+  }
+  if (!hits.length) return null;
+  hits.sort((a, b) => a.idx - b.idx);
+  const spans = hits.map((h) => [h.idx, h.idx + h.len]);
+
+  if (hits.length >= 2) {
+    const [first, second] = hits;
+    const beforeFirst = text.slice(Math.max(0, first.idx - 6), first.idx);
+    // 「转到微信，从银行卡」这类倒装：第一个其实是目标账户
+    const swapped = TO_HINT.test(beforeFirst) && !FROM_HINT.test(beforeFirst);
+    return {
+      fromAccountId: swapped ? second.acc.id : first.acc.id,
+      toAccountId: swapped ? first.acc.id : second.acc.id,
+      spans,
+    };
+  }
+
+  const only = hits[0];
+  const before = text.slice(Math.max(0, only.idx - 6), only.idx);
+  if (FROM_HINT.test(before) && !TO_HINT.test(before)) {
+    return { fromAccountId: only.acc.id, toAccountId: undefined, spans };
+  }
+  if (TO_HINT.test(before)) {
+    return { fromAccountId: undefined, toAccountId: only.acc.id, spans };
+  }
+  return { fromAccountId: only.acc.id, toAccountId: undefined, spans };
+}
+
+/* ------------------------------------------------------------------ */
 /* 备注                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -351,10 +400,12 @@ export function parseEntry(raw, ctx = {}) {
 
   const amountHit = extractAmount(maskSpans(text, dateSpans));
   const memberHit = matchMember(text, members);
+  const accHit = matchAccounts(maskSpans(text, dateSpans), ctx.accounts || []);
   const isSpecial = !KIND_MAP[kind]?.counted;
   const catHit = isSpecial ? null : matchCategory(maskSpans(text, dateSpans), categories, kind);
 
-  const spans = [dateHit?.span, amountHit?.span, memberHit?.span, kindHit?.span, catHit?.span];
+  const spans = [dateHit?.span, amountHit?.span, memberHit?.span, kindHit?.span, catHit?.span,
+    ...(accHit?.spans || [])];
   const note = buildNote(text, spans);
 
   if (!amountHit) warnings.push('没识别到金额，请手动填写');
@@ -362,6 +413,7 @@ export function parseEntry(raw, ctx = {}) {
   if (!dateHit) warnings.push('没识别到日期，默认记为今天');
   if (kind === 'expense' && !catHit) warnings.push('没识别到分类，已归到「其他支出」，可手动改');
   if (isSpecial) warnings.push(`${KIND_MAP[kind]?.name || kind}不计入家庭收支合计，只调整账户余额`);
+  if (kind === 'transfer' && !accHit) warnings.push('没认出转出/转入账户，请手动选一下');
   if (REIMBURSE_CLAIM_RE.test(text)) warnings.push('疑似垫付待报销，已标记「可报销」');
 
   let confidence = 0.35;
@@ -385,6 +437,8 @@ export function parseEntry(raw, ctx = {}) {
     categoryFullName: catHit ? catHit.categoryFullName : isSpecial ? '' : '其他支出',
     memberId: memberHit ? memberHit.memberId : null,
     memberName: memberHit ? memberHit.memberName : '',
+    fromAccountId: accHit?.fromAccountId || null,
+    toAccountId: accHit?.toAccountId || null,
     note,
     reimbursable: REIMBURSE_CLAIM_RE.test(text),
     confidence,

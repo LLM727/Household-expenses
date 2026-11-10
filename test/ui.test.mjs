@@ -149,3 +149,25 @@ test('保存一笔账：写入后缓存与页面都更新', async () => {
   assert.equal(app.draft, null);
   assert.match(root.innerHTML, /本月支出/);
 });
+
+test('转账草稿：出现转出/转入账户选择', async () => {
+  const { app, root } = await boot();
+  await app.doParse('从银行卡转账500到微信');
+  const html = root.innerHTML;
+  assert.match(html, /转出账户/);
+  assert.match(html, /转入账户/);
+  assert.match(html, /银行卡/);
+  assert.match(html, /微信/);
+  assert.equal(app.draft.kind, 'transfer');
+  assert.ok(app.draft.toAccountId, '没认出转入账户');
+});
+
+test('我的页：账户余额按账目推算', async () => {
+  const { app, root } = await boot();
+  app.tab = 'me';
+  await app.ensureFullHistory();
+  app.render();
+  const html = root.innerHTML;
+  assert.match(html, /账户余额/);
+  assert.match(html, /现金/);
+});

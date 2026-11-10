@@ -280,6 +280,15 @@ textarea { resize: vertical; min-height: 62px; line-height: 1.55; }
 .budget.over .b-foot { color: var(--exp); }
 .budget.warn .b-foot { color: var(--warn); }
 
+/* ---------- 账户余额 ---------- */
+.acctlist { list-style: none; margin: 0; padding: 0; }
+.acctlist li {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px;
+}
+.acctlist li:last-child { border-bottom: 0; }
+.acctlist strong { font-variant-numeric: tabular-nums; }
+
 /* ---------- 我的 ---------- */
 .kv { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 0; }
 .kv > span:first-child { color: var(--muted); width: 56px; }
@@ -291,8 +300,7 @@ textarea { resize: vertical; min-height: 62px; line-height: 1.55; }
 }
 .chip em { font-style: normal; color: var(--muted); font-size: 11px; }
 
-.cat-budget summary { font-size: 13px; color: var(--primary); cursor: pointer; margin: 10px 0; }
-.catlist { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; }
+.cat-budget summary { font-size: 13px; color: var(--primary); cursor: pointer; margin: 10px 0; }.catlist { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; }
 .catlist > li { padding: 7px 0; border-bottom: 1px solid var(--line); }
 .cat-name { display: inline-flex; gap: 6px; align-items: center; flex: 1; }
 .cat-name em { font-style: normal; font-size: 11px; color: var(--muted); }

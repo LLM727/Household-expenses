@@ -5,6 +5,7 @@
 - **语音或文字记账**：「今天给孩子报补习班花了3000」→ 自动识别金额、日期、类型、分类、人员，确认一下入账
 - **自动分类**：收支 / 人员（父、母、孩子）/ 二级类别（餐饮·买菜、教育·补习培训…），类别可自己加
 - **特殊类型不计收支**：转账、借出、收回、借入、归还、报销回款只调整账户与债权，不会把家庭总收支算错
+- **账户余额**：现金 / 微信 / 支付宝 / 银行卡，转账自动扣转出、加转入，余额按账目推算
 - **支持补录**：发生日期和记录时间分开，报表按发生日期算
 - **共享账本**：家人各注册一个账号，用 6 位邀请码加入同一本账，谁记的账在列表里可见
 - **图表统计**：支出构成环形图、近 6 个月收支柱状图、按人员排行、环比上一月
@@ -38,7 +39,6 @@ supabase/schema.sql     数据库结构（表 + 行级权限 + 邀请码函数�
 test/                   Node 单元测试（无需安装依赖）
 tools/serve.js          本地预览服务器
 ```
-
 ---
 
 ## 现在就能看一眼（不用注册任何东西）
@@ -53,12 +53,20 @@ node tools/serve.js
 ## 跑测试
 
 ```bash
-node test/parse.test.mjs
-node test/analytics.test.mjs
-node test/ui.test.mjs
+npm test
 ```
 
-（不用 `node --test`，某些受限环境下它会因子进程受限而失败。）
+或逐个跑（不用 `node --test`，某些受限环境下它会因子进程受限而失败）：
+
+```bash
+node test/parse.test.mjs      # 自然语言解析 16 项
+node test/analytics.test.mjs  # 统计聚合 10 项
+node test/accounts.test.mjs   # 账户识别与余额 8 项
+node test/remote.test.mjs     # Supabase 请求构造（离线假 fetch）8 项
+node test/ui.test.mjs         # 界面渲染冒烟 9 项
+```
+
+共 51 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ---
 

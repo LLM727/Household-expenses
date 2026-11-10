@@ -203,3 +203,53 @@ export function compareWithPrev(current, previous) {
 }
 
 export { KIND_MAP };
+
+/* ------------------------------------------------------------------ */
+/* 账户余额                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 按账目推算各账户余额（转账会同时扣转出、加转入）。
+ * @returns {Array<{id,name,kind,balance}>}
+ */
+export function accountBalances(transactions, accounts) {
+  const balances = new Map((accounts || []).map((a) => [a.id, round2(Number(a.initial_balance) || 0)]));
+  const bump = (id, delta) => {
+    if (!id || !balances.has(id)) return;
+    balances.set(id, round2(balances.get(id) + delta));
+  };
+
+  for (const tx of transactions || []) {
+    const amount = Number(tx.amount) || 0;
+    switch (tx.kind) {
+      case 'expense':
+        bump(tx.account_id, -amount);
+        break;
+      case 'income':
+        bump(tx.account_id, amount);
+        break;
+      case 'transfer':
+        bump(tx.account_id, -amount);
+        bump(tx.to_account_id, amount);
+        break;
+      case 'lend':
+      case 'borrow_return':
+        bump(tx.account_id, -amount);
+        break;
+      case 'lend_return':
+      case 'borrow':
+      case 'reimburse_back':
+        bump(tx.account_id, amount);
+        break;
+      default:
+        break;
+    }
+  }
+
+  return (accounts || []).map((a) => ({
+    id: a.id,
+    name: a.name,
+    kind: a.kind,
+    balance: balances.get(a.id) ?? 0,
+  }));
+}
