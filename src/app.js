@@ -1066,7 +1066,10 @@ class App {
       months,
       5,
     );
-    const donutTotal = expCats.reduce((a, b) => a + b.total, 0);
+    // 饼图只画「正数」分类。报销回款会把某个分类冲成负数，若仍用合计做分母，
+    // 扇形会超出整圈、百分比出现 148% 这种不可能的数字——所以分母用正数之和。
+    const donutTotal = expCats.filter((c) => c.total > 0).reduce((a, b) => a + b.total, 0);
+    const piePartial = Math.abs(U.round2(donutTotal - t.expense)) > 0.005;
 
     return `
     <section class="card">
@@ -1092,6 +1095,7 @@ class App {
         ${donutChart(expCats, { size: 168, total: donutTotal })}
         ${legend(expCats.slice(0, 6), donutTotal)}
       </div>
+      ${piePartial ? `<p class="fineprint">本月有报销回款冲减了支出，饼图只画实际花出去的分类；各项之和 ${U.money(donutTotal)}，比上面的支出合计多 ${U.money(U.round2(donutTotal - t.expense))}。</p>` : ''}
     </section>
 
     <section class="card">

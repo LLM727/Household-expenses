@@ -181,6 +181,24 @@ function jsonContentTypeOk(url) {
   return url.endsWith('.json');
 }
 
+/**
+ * 取一个引用。偶发的连接抖动不该让自检报红（那会让人误以为部署配错了），
+ * 所以失败重试两次，仍然不行才算问题。
+ */
+async function fetchWithRetry(url, attempts = 3) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const response = await fetch(url);
+      return { response, retries: i };
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 120 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 async function crawl(base) {
   const queue = [`${PREFIX}/`];
   const seen = new Set();
@@ -191,7 +209,15 @@ async function crawl(base) {
     if (seen.has(url)) continue;
     seen.add(url);
 
-    const response = await fetch(new URL(url, base));
+    let response;
+    let retries = 0;
+    try {
+      ({ response, retries } = await fetchWithRetry(new URL(url, base)));
+    } catch (err) {
+      bad('引用取不到', `${url} → ${err.message}`);
+      continue;
+    }
+    if (retries > 0) notes.push(`${url} 重试 ${retries} 次才取到`);
     if (!response.ok) {
       bad('引用 404', `${url} → HTTP ${response.status}`);
       continue;

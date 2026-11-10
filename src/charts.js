@@ -20,7 +20,9 @@ export function donutChart(items, { size = 190, thickness = 26, total: totalOver
   if (!list.length) {
     return `<div class="empty-chart">这个月还没有数据</div>`;
   }
-  const total = totalOverride || list.reduce((a, b) => a + Number(b.value), 0);
+  const positiveSum = list.reduce((a, b) => a + Number(b.value), 0);
+  // 分母不能小于各扇形之和，否则扇形会绕圈重叠、出现 148% 这种数字
+  const total = Math.max(Number(totalOverride) || 0, positiveSum) || positiveSum;
   const r = 50 - thickness / 2;
   const circumference = 2 * Math.PI * r;
   const center = 50;
@@ -54,8 +56,11 @@ export function donutChart(items, { size = 190, thickness = 26, total: totalOver
 export function legend(items, total) {
   const list = normalize(items).filter((d) => Number(d.value) > 0);
   if (!list.length) return '';
+  // 同 donutChart：分母至少是各正数之和，百分比才不会超过 100%
+  const positiveSum = list.reduce((a, b) => a + Number(b.value), 0);
+  const base = Math.max(Number(total) || 0, positiveSum) || positiveSum;
   return `<ul class="legend">${list.map((d, i) => {
-    const pct = total ? ((Number(d.value) / total) * 100).toFixed(0) : 0;
+    const pct = base ? ((Number(d.value) / base) * 100).toFixed(0) : 0;
     return `<li>
       <span class="dot" style="background:${d.color || colorForIndex(i)}"></span>
       <span class="lg-name">${escapeHtml(d.label)}</span>
