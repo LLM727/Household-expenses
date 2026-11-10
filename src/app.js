@@ -21,6 +21,27 @@ const TABS = [
   { key: 'me', name: '我的', icon: '👤' },
 ];
 
+/**
+ * 这台设备上「网页语音识别」能不能用。
+ *
+ * iPhone / iPad 上不管装的是 Chrome、Edge 还是微信，内里都是 Safari 的内核（WebKit），
+ * 网页语音识别一律不可用——所以对 iOS 用户说「换个浏览器」是句照做也没用的话。
+ * 那里唯一能用的办法是系统键盘自带的听写（键盘右下角那个 🎤），说出来的字会直接进输入框，
+ * 后面的识别流程完全一样。判断要是不准，给出的建议就没法照做，比不给建议更糟。
+ */
+function voiceEnv() {
+  if (globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition) return 'ok';
+  const nav = globalThis.navigator || {};
+  const ua = String(nav.userAgent || '');
+  const iPadAsMac = /Macintosh/i.test(ua) && Number(nav.maxTouchPoints || 0) > 1;
+  return /iPhone|iPad|iPod/i.test(ua) || iPadAsMac ? 'ios' : 'none';
+}
+
+const VOICE_HINT = {
+  ios: 'iPhone / iPad 上网页用不了浏览器语音。点上面的输入框，用键盘右下角的 🎤 说话，说完点「识别一下」，效果一样。',
+  none: '这个浏览器不支持网页语音。点输入框用键盘上的语音键，或者换 Chrome / Edge，也可以直接打字。',
+};
+
 /* ------------------------------------------------------------------ */
 
 class App {
@@ -511,11 +532,15 @@ class App {
   }
 
   startVoice() {
-    const SR = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
-    if (!SR) {
-      this.showToast('这个浏览器不支持语音识别，请用 Chrome / Edge，或直接打字');
+    const env = voiceEnv();
+    if (env !== 'ok') {
+      this.showToast(env === 'ios' ? 'iPhone 上请点输入框，用键盘上的 🎤 说话' : '这个浏览器不支持网页语音，用键盘的语音键或直接打字');
+      // 顺手把输入框聚焦，等于替用户把键盘（连着听写键）调出来
+      const ta = this.root.querySelector('#raw-text');
+      if (ta && typeof ta.focus === 'function') ta.focus();
       return undefined;
     }
+    const SR = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
     if (this.listenState === 'listening') return undefined;
     try {
       const rec = new SR();
@@ -858,7 +883,8 @@ class App {
       <div class="row-gap">
         <button class="btn primary" data-act="parse">识别一下</button>
         <button class="btn ghost" data-act="clear-text">清空</button>
-      </div>`}
+      </div>
+      ${voiceEnv() === 'ok' ? '' : `<p class="fineprint">${U.escapeHtml(VOICE_HINT[voiceEnv()])}</p>`}`}
       ${this.draft ? this.viewDraft() : ''}
     </section>
 

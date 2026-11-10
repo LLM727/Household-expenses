@@ -409,7 +409,8 @@ test('语音：浏览器不支持时说明白，不报错', async () => {
   delete globalThis.SpeechRecognition;
   delete globalThis.webkitSpeechRecognition;
   app.startVoice();
-  assert.match(app.toastMsg, /不支持语音识别/, `提示不对：${app.toastMsg}`);
+  // 具体措辞随设备不同（见下面三条），这里只要求「说清楚不行 + 给出下一步」
+  assert.match(app.toastMsg, /不支持|键盘/, `提示不对：${app.toastMsg}`);
 });
 
 test('语音：中途结果只填输入框，说完才自动生成草稿', async () => {
@@ -468,4 +469,69 @@ test('语音：麦克风被拒绝时说人话，并复位状态', async () => {
   assert.match(app.toastMsg, /麦克风被拒绝/, `提示不对：${app.toastMsg}`);
   assert.equal(app.listenState, null, '出错后状态没复位');
   delete globalThis.SpeechRecognition;
+});
+
+/* ---------- 语音输入的设备差异：给出的建议必须能照做 ---------- */
+
+const UA_IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+const UA_CHROME_DESKTOP = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/** 在「假装是某台设备」的环境里跑一段：换掉 userAgent 和语音能力，跑完一定还原 */
+async function withDevice({ ua, speech }, fn) {
+  const navDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const hadSR = 'SpeechRecognition' in globalThis;
+  const hadWebkit = 'webkitSpeechRecognition' in globalThis;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { userAgent: ua, maxTouchPoints: 0 },
+    configurable: true,
+    writable: true,
+  });
+  if (speech) globalThis.SpeechRecognition = function FakeSR() {};
+  else {
+    delete globalThis.SpeechRecognition;
+    delete globalThis.webkitSpeechRecognition;
+  }
+  try {
+    return await fn();
+  } finally {
+    if (navDesc) Object.defineProperty(globalThis, 'navigator', navDesc);
+    else delete globalThis.navigator;
+    if (!hadSR) delete globalThis.SpeechRecognition;
+    if (!hadWebkit) delete globalThis.webkitSpeechRecognition;
+  }
+}
+
+test('iPhone 上没语音能力：指点用键盘听写，而不是让人「换个浏览器」', async () => {
+  await withDevice({ ua: UA_IPHONE, speech: false }, async () => {
+    const { app, root } = await boot();
+    app.tab = 'record';
+    app.render();
+    const html = root.innerHTML;
+    assert.match(html, /键盘/, 'iPhone 上应该告诉用户用键盘听写');
+    assert.match(html, /🎤/, '要指出键盘上那个麦克风键');
+    assert.doesNotMatch(html, /换 Chrome \/ Edge/, 'iPhone 上让用户换浏览器，照做也没用（内核都是 WebKit）');
+
+    app.startVoice();
+    assert.match(app.toastMsg, /键盘/, `点麦克风后的提示不对：${app.toastMsg}`);
+  });
+});
+
+test('桌面上没有语音能力：建议换 Chrome / Edge 或打字', async () => {
+  await withDevice({ ua: UA_CHROME_DESKTOP, speech: false }, async () => {
+    const { app, root } = await boot();
+    app.tab = 'record';
+    app.render();
+    assert.match(root.innerHTML, /Chrome \/ Edge/);
+  });
+});
+
+test('浏览器自带语音能力时，不显示多余的说明', async () => {
+  await withDevice({ ua: UA_IPHONE, speech: true }, async () => {
+    const { app, root } = await boot();
+    app.tab = 'record';
+    app.render();
+    const html = root.innerHTML;
+    assert.doesNotMatch(html, /网页用不了浏览器语音/, '能用就别啰嗦');
+    assert.match(html, /🎤/); // 麦克风按钮本身还在
+  });
 });

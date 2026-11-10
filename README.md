@@ -47,16 +47,18 @@ tools/serve.js          本地预览服务器
 tools/check-config.js   上线自检：填完配置跑一下，逐条告诉你哪里没弄好
 tools/check-assets.js   部署前资源检查：大小写、缺失文件、裸导入
 tools/check-pages.js    模拟 GitHub Pages 子路径托管，验证推上去不会白屏
+tools/check-mobile.js   手机适配自检：iOS 聚焦放大、小白条压住标签栏、按钮点不准
 ```
 
 ---
 
-## 推送前跑三个检查
+## 推送前跑四个检查
 
 ```bash
 node tools/check-config.js    # Supabase 那边：地址/key/表/行级权限/函数/注册
 node tools/check-assets.js    # 这边：文件都在、大小写对、没有 Node 专有 API
 node tools/check-pages.js     # 托管那边：子路径 /Household-expenses/ 下每个引用都能取到
+node tools/check-mobile.js    # 手机那边：输入框会不会被 iOS 放大、按钮点不点得准
 ```
 
 第二个专治「本地能开、Pages 白屏」：Windows 不区分大小写，GitHub Pages 是 Linux。
@@ -67,6 +69,11 @@ node tools/check-pages.js     # 托管那边：子路径 /Household-expenses/ �
 这种绝对路径在本地根路径预览时完全正常，推上去就 404。这个脚本会把仓库复制到临时目录的
 `Household-expenses/` 子目录里，起一个和 Pages 行为一致的服务器，从首页开始把 14 个引用
 逐个请求一遍，同时检查 manifest 的 `start_url` 是否落在子路径内、`.nojekyll` 是否就位。
+
+第四个专治「电脑上好好的、手机上难用」：这家人是用手机记账的，而下面这些毛病在桌面浏览器里
+一个都看不出来——输入框字号小于 16px 会被 iOS 一聚焦就放大整页；底部标签栏没留
+`safe-area` 会被 iPhone 的小白条压住；`100vh` 在 iOS 上把地址栏也算进去，页面比屏幕高一截；
+删除按钮只有十几像素宽，手指点不准。检查项共 7 条，每条都验证过「改坏了确实会报错」。
 
 ---
 
@@ -238,3 +245,8 @@ HTTP 200 照旧。家里记到第 1001 笔之后，账户余额和统计就会�
 
 语音输入出来的句子往往没有标点、中间带空格、金额是中文数字——这些都能直接认。
 说不清楚的（比如只说「朋友还钱」）它会**提示你核对方向**，而不是替你猜。
+
+**手机上怎么说话**：安卓 Chrome、电脑 Chrome / Edge 直接点输入框右边的 🎤。
+iPhone / iPad 上不管用哪个浏览器（Chrome、Edge、微信都一样，内核都是 Safari 的），网页语音
+用不了——这时点一下输入框，用**键盘右下角那个 🎤**（系统听写）说，说完点「识别一下」，
+后面的识别流程完全一样。页面在 iPhone 上会直接把这句话显示出来，不用你自己去猜。
