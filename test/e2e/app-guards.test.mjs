@@ -139,3 +139,20 @@ test('还没登录时切回前台不会炸', async () => {
   await listeners.visibilitychange();
   assert.ok(root.has('登录'), '应该还在登录页');
 });
+
+test('退出登录：界面立刻回到登录页，账目不再显示', async () => {
+  const { app, root } = await bootReadyFamily('signout@test.com');
+  await app.doParse('今天买菜35.5元');
+  await app.saveDraft();
+  app.tab = 'list';
+  await app.refreshData();
+  app.render();
+  assert.ok(root.has('买菜'), '记账后流水页应该有这笔');
+
+  await app._handleAction('signout', null, null); // 走界面上的真实分支
+
+  assert.equal(app.loggedIn, false, '退出后仍被视为已登录');
+  assert.ok(root.has('登录'), '退出后应该看到登录页');
+  assert.ok(!root.has('买菜'), '退出后屏幕上不该还留着账目');
+  assert.equal(app.cache.size, 0, '本地缓存没清空');
+});
