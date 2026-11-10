@@ -90,10 +90,10 @@ node test/analytics.test.mjs  # 统计聚合与分类趋势 12 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
 node test/remote.test.mjs     # Supabase 请求构造（离线假 fetch）8 项
 node test/check.test.mjs      # 上线自检的判断逻辑 9 项
-node test/ui.test.mjs         # 界面渲染、业务闭环、HTML 标签配对 12 项
+node test/ui.test.mjs         # 界面渲染、业务闭环、标签配对、交互接线 14 项
 ```
 
-共 65 项，全部离线可跑，不需要真实 Supabase 项目。
+共 67 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 改了数据库结构怎么验
 
