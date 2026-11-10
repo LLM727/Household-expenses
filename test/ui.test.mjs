@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 class FakeEl {
   constructor(tag = 'div') {
@@ -248,6 +249,61 @@ function assertBalancedHtml(html, label) {
   }
   assert.deepEqual(stack, [], `${label}: 有标签没闭合 → ${stack.join(' > ')}`);
 }
+
+test('每个 data-act 都有对应的处理分支', async () => {
+  const { app, root } = await boot();
+  const seen = new Set();
+  const collect = () => {
+    for (const m of root.innerHTML.matchAll(/data-act="([^"]+)"/g)) seen.add(m[1]);
+  };
+
+  for (const tab of ['record', 'list', 'stats', 'me']) {
+    app.tab = tab;
+    if (tab === 'list' || tab === 'stats') await app.refreshData();
+    if (tab === 'me') await app.ensureFullHistory();
+    app.render();
+    collect();
+  }
+  app.showCategoryManager = true; // 分类管理展开后还有一批按钮
+  app.tab = 'me';
+  app.render();
+  collect();
+  await app.doParse('今天买菜35元');
+  collect();
+  await app.doParse('从银行卡转账500到微信');
+  collect();
+  app.draft = null;
+  const db = app.store.db;
+  db.session = null;
+  app.render();
+  collect();
+  db.session = { user: { id: 'u-demo' } };
+  db.profile = { ...db.profile, family_id: null };
+  app.render();
+  collect();
+
+  const source = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+  const handled = new Set([...source.matchAll(/case\s+'([^']+)'/g)].map((m) => m[1]));
+
+  assert.ok(seen.size > 10, `只找到 ${seen.size} 个 data-act，样本太少`);
+  const missing = [...seen].filter((a) => !handled.has(a));
+  assert.deepEqual(missing, [], `这些按钮点了没反应（没有 case 分支）：${missing.join(', ')}`);
+});
+
+test('每个 data-field 都会被读进草稿', async () => {
+  const { app, root } = await boot();
+  const fields = new Set();
+  for (const raw of ['今天买菜35元', '从银行卡转账500到微信', '报销回来60元']) {
+    app.draft = null;
+    await app.doParse(raw);
+    for (const m of root.innerHTML.matchAll(/data-field="([^"]+)"/g)) fields.add(m[1]);
+  }
+
+  assert.ok(fields.size >= 4, `只找到 ${fields.size} 个可编辑字段`);
+  const source = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+  const missing = [...fields].filter((f) => !source.includes(`field === '${f}'`));
+  assert.deepEqual(missing, [], `这些字段改了不会生效：${missing.join(', ')}`);
+});
 
 test('每个页面的 HTML 标签都配对', async () => {
   const { app, root } = await boot();
