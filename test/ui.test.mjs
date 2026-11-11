@@ -571,6 +571,25 @@ test('报错兜底：Supabase 的英文原文不能直接显示给用户', async
   assert.match(wrapped, /some_weird_db_error_9381/, '原文被吃掉了，以后没法排查');
 });
 
+test('数据库自己的中文提示原样放出去，别再包一层「重试」', async () => {
+  // schema.sql 里 raise 的中文错误是写给用户看的，本身已经说清了原因和办法。
+  // 如果被末道兜底再包一层，会变成「出了点问题，再试一次……邀请码不对，请向家人要一个最新的」——
+  // 前半句在叫人重试，可邀请码错了重试多少次都没用。
+  const { app } = await boot();
+  const DB_MESSAGES = [
+    '邀请码不对，请向家人要一个最新的',
+    '你已经在某个家庭里了',
+    '不能自己修改所属家庭，请用邀请码加入',
+    '未登录',
+  ];
+  for (const msg of DB_MESSAGES) {
+    const out = app._friendly({ message: msg });
+    assert.equal(out, msg, `数据库的中文提示被改写了：「${msg}」→「${out}」`);
+    assert.ok(!/再试一次/.test(out), `「${msg}」被包上了「再试一次」`);
+    assert.ok(!/发给我/.test(out), `「${msg}」被要求发给开发者，可它已经说清了`);
+  }
+});
+
 test('语音：浏览器不支持时说明白，不报错', async () => {
   const { app } = await boot();
   delete globalThis.SpeechRecognition;
