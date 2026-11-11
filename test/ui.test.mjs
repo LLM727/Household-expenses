@@ -122,6 +122,22 @@ test('统计页：图表与环比都在', async () => {
   assert.match(html, /预算/);
 });
 
+test('统计页：按人员和收入构成里的数字必须是钱的样子', async () => {
+  // 回归：charts.js 的 normalize() 原来把 display 丢掉，横条图只能显示裸数字。
+  // 于是同一屏里「本月支出 ¥xxx」和「按人员 120」两种写法并存，看着不像钱。
+  const { app, root } = await boot();
+  app.tab = 'stats';
+  await app.refreshData();
+  app.render();
+  const html = root.innerHTML;
+
+  const values = [...html.matchAll(/<span class="hb-value">([^<]*)<\/span>/g)].map((m) => m[1]);
+  assert.ok(values.length > 0, '统计页一个横条都没有，这条断言等于没验');
+  for (const v of values) {
+    assert.match(v, /^[-¥]?¥?[\d,]+\.\d{2}$/, `横条图上的「${v}」不是金额格式（应有 ¥ 和两位小数）`);
+  }
+});
+
 test('我的页：邀请码、成员、分类管理', async () => {
   const { app, root } = await boot();
   app.tab = 'me';

@@ -2,11 +2,19 @@
 
 import { escapeHtml, colorForIndex } from './utils.js';
 
-/** 统一数据形状：接受 {label|name|fullName, value|total} 两种写法 */
+/**
+ * 统一数据形状：接受 {label|name|fullName, value|total} 两种写法
+ *
+ * `display` 必须原样带出来。它装的是「给人看的那个字符串」（比如 ¥120.00），
+ * 而 value 是给画图算比例的裸数字。原来的实现只挑 label/value/color 三样，
+ * 把 display 悄悄丢了，于是 horizontalBars 里 `d.display ?? d.value` 永远走 fallback，
+ * 页面上就出现「同一屏里别处写 ¥220.00、这里写 220」——用户看不出这是钱。
+ */
 function normalize(items) {
   return (items || []).map((d) => ({
     label: d.label ?? d.fullName ?? d.name ?? '',
-    value: Number(d.value ?? d.total ?? d.display ?? 0),
+    value: Number(d.value ?? d.total ?? 0),
+    display: d.display,
     color: d.color,
   }));
 }

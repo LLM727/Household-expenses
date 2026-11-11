@@ -5,7 +5,7 @@
   "type": "module",
   "description": "家庭记账本 - 语音/文字记账，自动分类，共享账本与统计报表",
   "scripts": {
-    "test": "node test/parse.test.mjs && node test/analytics.test.mjs && node test/accounts.test.mjs && node test/remote.test.mjs && node test/check.test.mjs && node test/xlsx.test.mjs && node test/ui.test.mjs",
+    "test": "node test/parse.test.mjs && node test/analytics.test.mjs && node test/charts.test.mjs && node test/accounts.test.mjs && node test/remote.test.mjs && node test/check.test.mjs && node test/xlsx.test.mjs && node test/ui.test.mjs",
     "check": "node tools/check-config.js",
     "check:assets": "node tools/check-assets.js",
     "check:pages": "node tools/check-pages.js",
