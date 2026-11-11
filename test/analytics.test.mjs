@@ -135,11 +135,51 @@ test('budgetStatus：正常/即将超支/已超支', () => {
   ];
   const rows = budgetStatus(budgets, list, categories, 0.8);
   const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+  // 教育没有小类：900 / 1000
+  assert.equal(byName['教育'].used, 900);
   assert.equal(byName['教育'].state, 'warn');
-  assert.equal(byName['餐饮'].state, 'warn');
+  // 餐饮是把「在外吃饭」那 90 也算进来的：90 + 90 = 180，超了 100 的预算
+  assert.equal(byName['餐饮'].used, 180, '大类预算没把小类的钱汇总进来');
+  assert.equal(byName['餐饮'].state, 'over');
+  assert.equal(byName['餐饮'].remaining, -80);
+  // 小类预算只管自己这 90
+  assert.equal(byName['餐饮·在外吃饭'].used, 90);
   assert.equal(byName['餐饮·在外吃饭'].state, 'over');
+  // 总预算 = 900 + 90 + 90
+  assert.equal(byName['总预算'].used, 1080);
   assert.equal(byName['总预算'].state, 'ok');
-  assert.equal(byName['餐饮'].remaining, 10);
+});
+
+test('budgetStatus：大类预算要汇总小类，小类预算不反向吃大类的账', () => {
+  // 这是给「界面上只能给大类设预算」配的规则。用户给「餐饮」设 1000，
+  // 钱几乎都记在小类（餐饮/买菜、餐饮/在外吃饭）上。如果只按 category_id 精确相等，
+  // 大类的预算永远显示「已用 0」、永远不超支——设了跟没设一样。
+  const cats = [
+    { id: 'food', name: '餐饮', kind: 'expense', parent_id: null, fullName: '餐饮' },
+    { id: 'food-market', name: '买菜', kind: 'expense', parent_id: 'food', fullName: '餐饮/买菜' },
+    { id: 'food-out', name: '在外吃饭', kind: 'expense', parent_id: 'food', fullName: '餐饮/在外吃饭' },
+    { id: 'traffic', name: '交通', kind: 'expense', parent_id: null, fullName: '交通' },
+  ];
+  const budgets = [
+    { id: 'b-food', category_id: 'food', amount: 1000 },
+    { id: 'b-market', category_id: 'food-market', amount: 500 },
+  ];
+  const list = [
+    tx({ amount: 800, category_id: 'food-market' }),
+    tx({ amount: 200, category_id: 'food-out' }),
+    tx({ amount: 100, category_id: 'food' }), // 直接记在大类上，也要算
+    tx({ amount: 50, category_id: 'traffic' }), // 别的分类不能串进来
+  ];
+  const rows = budgetStatus(budgets, list, cats, 0.8);
+  const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+
+  // 餐饮 = 买菜 800 + 在外吃饭 200 + 直接记的 100；交通那 50 不算
+  assert.equal(byName['餐饮'].used, 1100, '大类预算的汇总口径不对');
+  assert.equal(byName['餐饮'].state, 'over');
+
+  // 小类预算只算自己，不把兄弟分类的钱也加进来
+  assert.equal(byName['餐饮·买菜'].used, 800, '小类预算算了别的分类的钱');
+  assert.equal(byName['餐饮·买菜'].state, 'over');
 });
 
 test('compareWithPrev：环比百分比', () => {  const cur = [tx({ amount: 150 })];

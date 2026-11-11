@@ -169,8 +169,34 @@ export function budgetStatus(budgets, transactions, categories, warnRatio = 0.8)
     catTotals.set(tx.category_id, round2((catTotals.get(tx.category_id) || 0) + value));
   }
 
+  // 分类预算要「往下汇总」：界面上只能给大类（餐饮、交通…）设预算，
+  // 而记账时钱几乎都落在小类上（餐饮/买菜、餐饮/在外吃饭）。
+  // 只按 category_id 精确相等去加，等于大类预算永远显示 0 已用、永远不超支——
+  // 用户设了预算却什么都没发生，比没有这个功能更糟。
+  const ancestors = new Map(); // 分类 id -> 它的各级上级 id
+  for (const c of categories || []) {
+    const chain = [];
+    let cur = c.parent_id ? cmap.get(c.parent_id) : null;
+    let guard = 0;
+    while (cur && guard < 10) {
+      chain.push(cur.id);
+      cur = cur.parent_id ? cmap.get(cur.parent_id) : null;
+      guard += 1;
+    }
+    ancestors.set(c.id, chain);
+  }
+  const rollup = new Map(); // 分类 id -> 该分类自身加上所有下级分类的合计
+  for (const [catId, amount] of catTotals) {
+    rollup.set(catId, round2((rollup.get(catId) || 0) + amount));
+    for (const anc of ancestors.get(catId) || []) {
+      rollup.set(anc, round2((rollup.get(anc) || 0) + amount));
+    }
+  }
+
   return (budgets || []).map((b) => {
-    const used = b.category_id ? catTotals.get(b.category_id) || 0 : round2(sumBy(transactions || [], expenseDelta));
+    const used = b.category_id
+      ? rollup.get(b.category_id) || 0
+      : round2(sumBy(transactions || [], expenseDelta));
     const ratio = b.amount > 0 ? used / b.amount : 0;
     const cat = b.category_id ? cmap.get(b.category_id) : null;
     return {

@@ -1250,7 +1250,7 @@ class App {
       <label class="field"><span>本月总预算（留空或 0 表示不设）</span>
         <input type="number" inputmode="decimal" data-budget-input="" value="${this.budgetValue(null)}" placeholder="0">
       </label>
-      <p class="fineprint">也可以按分类设预算，用完 80% 会提醒，超了首页和统计页会标红。</p>
+      <p class="fineprint">也可以按分类设预算（只能选大类，比如「餐饮」——记到「餐饮/买菜」的钱会自动算进「餐饮」），用完 80% 会提醒，超了首页和统计页会标红。</p>
       <details class="cat-budget">
         <summary>按分类设预算</summary>
         ${parents.map((p) => `<label class="field"><span>${p.icon || ''} ${U.escapeHtml(p.name)}</span>
