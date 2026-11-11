@@ -14,7 +14,35 @@
  *   npm i --no-save @electric-sql/pglite
  */
 
-import { PGlite } from '@electric-sql/pglite';
+// PGlite 用动态 import：它不在 package.json 里（前端必须保持零依赖、clone 即跑），
+// 需要的人临时装。直接静态 import 的话，新克隆下来第一次跑 e2e 会得到一屏
+// Node 内部堆栈 + ERR_MODULE_NOT_FOUND，看不出该做什么。这里换成一句能照做的话。
+let PGlite;
+try {
+  ({ PGlite } = await import('@electric-sql/pglite'));
+} catch (err) {
+  if (err?.code === 'ERR_MODULE_NOT_FOUND' || /Cannot find package/.test(err?.message || '')) {
+    console.error(
+      [
+        '',
+        '端到端测试需要一个临时依赖：PGlite（WASM 版真 Postgres，用来跑真实的 schema.sql）。',
+        '',
+        '先装它（--no-save：只是本地临时用，不会写进 package.json，也不影响网页本身）：',
+        '',
+        '   npm i --no-save @electric-sql/pglite',
+        '',
+        '然后再跑：',
+        '',
+        '   npm run test:e2e',
+        '',
+        '只想跑不需要依赖的单元测试的话，用 npm test 就行。',
+        '',
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+  throw err;
+}
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
