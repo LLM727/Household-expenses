@@ -149,6 +149,52 @@ test('我的页：邀请码、成员、分类管理', async () => {
   assert.match(html, /退出演示/);
 });
 
+test('别人塞进分类图标里的 HTML 不能在本机跑起来', async () => {
+  // 记账本是全家共用一本账：一个人写进去的内容会出现在另一个人的浏览器里。
+  // 分类名和成员名一直有转义，但分类的 icon 字段是直接拼进 HTML 的——
+  // 「记账页的图标」「预算页的分类名」「分类管理列表」三处都是。
+  // 界面上没有输入 icon 的地方，可数据库那一列是能写的（anon key 就能调），
+  // 所以这里按「数据已经是脏的」来验渲染层，别指望上游拦住。
+  const XSS = '<img src=x onerror=alert(1)>';
+  const { app, root } = await boot();
+
+  const store = app.store;
+  store.db.categories = [
+    { id: 'evil-parent', name: `${XSS}餐饮`, kind: 'expense', parent_id: null, icon: XSS },
+    { id: 'evil-child', name: `${XSS}买菜`, kind: 'expense', parent_id: 'evil-parent', icon: XSS },
+    { id: 'evil-salary', name: `${XSS}工资`, kind: 'income', parent_id: null, icon: XSS },
+  ];
+  store.db.members = [{ id: 'evil-m1', display_name: `${XSS}爸爸`, role: 'father' }];
+  store.db.accounts = [{ id: 'evil-a1', name: `${XSS}现金`, kind: 'cash' }];
+  store.db.transactions = [{
+    id: 'evil-tx1', kind: 'expense', amount: 35.5, occurred_on: '2026-11-05',
+    member_id: 'evil-m1', created_by: 'evil-m1', category_id: 'evil-parent',
+    note: `${XSS}备注`, raw_input: `${XSS}原始`, reimbursable: true,
+  }];
+  store.db.budgets = [{ id: 'evil-b1', category_id: 'evil-parent', month: '2026-11', amount: 1000 }];
+
+  app.cache = new Map(store.db.transactions.map((t) => [t.id, t]));
+  app.budgets = store.db.budgets;
+  app.monthBudgets = store.db.budgets;
+
+  for (const tab of ['record', 'list', 'stats', 'me']) {
+    app.tab = tab;
+    if (tab === 'record') {
+      app.draft = {
+        kind: 'expense', amount: 35.5, note: `${XSS}草稿备注`, raw: `${XSS}原始`,
+        categoryId: 'evil-parent', memberId: 'evil-m1', occurredOn: '2026-11-11',
+      };
+    }
+    await app.refreshData();
+    app.render();
+    const html = root.innerHTML;
+    assert.ok(!/<img\s+src=x/i.test(html), `${tab} 页把分类图标里的 HTML 原样拼进去了（XSS）`);
+    // 正向断言：内容本身还得看得见，只是被转义。
+    // 否则「整页空掉」也能让上面的否定断言通过——这个坑之前踩过。
+    assert.ok(html.includes('&lt;img'), `${tab} 页连转义后的内容都没有，这条否定断言等于没验`);
+  }
+});
+
 test('编辑账目：点开一条进入编辑态', async () => {
   const { app, root } = await boot();
   const anyTx = [...app.cache.values()][0];

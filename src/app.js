@@ -993,7 +993,7 @@ class App {
     for (const p of parents) {
       const kids = list.filter((c) => c.parent_id === p.id);
       if (!kids.length) {
-        opts.push(`<option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${p.icon || ''} ${U.escapeHtml(p.name)}</option>`);
+        opts.push(`<option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${U.escapeHtml(p.icon || '')} ${U.escapeHtml(p.name)}</option>`);
       } else {
         opts.push(`<optgroup label="${U.escapeHtml(p.name)}">
           <option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${U.escapeHtml(p.name)}（大类）</option>
@@ -1053,7 +1053,7 @@ class App {
       const owner = this.memberName(tx.member_id);
       const who = owner && owner !== creator ? `${owner} / ${creator}记` : owner || (creator ? `${creator}记` : '');
       return `<li class="tx" data-act="edit-tx" data-id="${tx.id}">
-        <span class="tx-icon">${cat?.icon || (isExpense ? '💸' : '💵')}</span>
+        <span class="tx-icon">${U.escapeHtml(cat?.icon || (isExpense ? '💸' : '💵'))}</span>
         <span class="tx-main">
           <span class="tx-title">${U.escapeHtml(label)}${tx.note ? ` · ${U.escapeHtml(tx.note)}` : ''}</span>
           <span class="tx-sub">${U.escapeHtml(who)}${tx.reimbursable ? ' · 待报销' : ''}${meta.counted === false ? ' · 不计收支' : ''}</span>
@@ -1175,7 +1175,7 @@ class App {
         <span class="muted">${month}</span></div>
       ${budgets.length ? `<ul class="budget-list">${budgets.map((b) => `
         <li class="budget ${b.state}">
-          <div class="b-head"><span>${b.icon} ${U.escapeHtml(b.name)}</span>
+          <div class="b-head"><span>${U.escapeHtml(b.icon || '')} ${U.escapeHtml(b.name)}</span>
             <span>${U.money(b.used)} / ${U.money(b.amount)}</span></div>
           <div class="b-track"><div class="b-fill" style="width:${Math.min(100, b.ratio * 100).toFixed(1)}%"></div></div>
           <div class="b-foot">${b.state === 'over'
@@ -1261,7 +1261,7 @@ class App {
       <p class="fineprint">也可以按分类设预算（只能选大类，比如「餐饮」——记到「餐饮/买菜」的钱会自动算进「餐饮」），用完 80% 会提醒，超了首页和统计页会标红。</p>
       <details class="cat-budget">
         <summary>按分类设预算</summary>
-        ${parents.map((p) => `<label class="field"><span>${p.icon || ''} ${U.escapeHtml(p.name)}</span>
+        ${parents.map((p) => `<label class="field"><span>${U.escapeHtml(p.icon || '')} ${U.escapeHtml(p.name)}</span>
           <input type="number" inputmode="decimal" data-budget-input="${p.id}" value="${this.budgetValue(p.id)}" placeholder="0">
         </label>`).join('')}
       </details>
@@ -1290,7 +1290,7 @@ class App {
         <ul class="catlist">${parents.map((p) => {
     const kids = list.filter((c) => c.parent_id === p.id);
     return `<li>
-            <span class="cat-name">${p.icon || ''} ${U.escapeHtml(p.name)}<em>${p.kind === 'income' ? '收入' : '支出'}</em></span>
+            <span class="cat-name">${U.escapeHtml(p.icon || '')} ${U.escapeHtml(p.name)}<em>${p.kind === 'income' ? '收入' : '支出'}</em></span>
             <button class="tx-del" data-act="delete-category" data-id="${p.id}">×</button>
             ${kids.length ? `<ul class="subcats">${kids.map((c) => `
               <li><span>${U.escapeHtml(c.name)}</span>
