@@ -466,6 +466,75 @@ function withRawTextInput(root) {
 
 const results = (transcript, isFinal) => [{ 0: { transcript }, isFinal }];
 
+test('注册：邮箱写得不像邮箱，本地就要拦住，不能发给 Supabase', async () => {
+  // 整个应用没有 <form>，所以 <input type="email"> 的原生校验根本不生效
+  // （它只在表单提交时触发）。格式错的邮箱会一路发到 Supabase，
+  // 回来的是英文原文「Unable to validate email address: invalid format」。
+  const { app, root } = await boot();
+  app.authMode = 'signup';
+
+  const BAD = ['abc', 'abc@', 'abc@def', 'a b@c.com', 'abc@def.', '@abc.com'];
+  for (const email of BAD) {
+    let sent = false;
+    app.store.signUp = async () => {
+      sent = true;
+    };
+    root.querySelector = (sel) => {
+      if (sel === '#auth-email') return { value: email };
+      if (sel === '#auth-password') return { value: '123456' };
+      if (sel === '#auth-name') return { value: '爸爸' };
+      return null;
+    };
+    app.authError = '';
+    app.busy = false;
+    await app.submitAuth();
+
+    assert.equal(sent, false, `「${email}」这种邮箱居然发出去了`);
+    assert.match(app.authError, /邮箱格式/, `「${email}」的提示不对：${app.authError}`);
+    assert.match(
+      app.authError,
+      /[\u4e00-\u9fa5]{6,}/,
+      `「${email}」的提示不是一句完整中文：${app.authError}`,
+    );
+  }
+
+  // 正向：正常邮箱必须放行，别把好邮箱也拦了
+  for (const email of ['abc@example.com', 'a.b+c@sub.example.co.uk']) {
+    let sent = false;
+    app.store.signUp = async () => {
+      sent = true;
+    };
+    root.querySelector = (sel) => {
+      if (sel === '#auth-email') return { value: email };
+      if (sel === '#auth-password') return { value: '123456' };
+      if (sel === '#auth-name') return { value: '爸爸' };
+      return null;
+    };
+    app.authError = '';
+    app.busy = false;
+    await app.submitAuth();
+    assert.equal(sent, true, `正常邮箱「${email}」被本地校验拦住了`);
+    assert.equal(app.authError, '', `正常邮箱「${email}」居然报错：${app.authError}`);
+  }
+});
+
+test('报错兜底：Supabase 的英文原文不能直接显示给用户', async () => {
+  // 本地校验只是第一道。版本差异、别的入口（比如重发邮件）都可能把英文原文漏上来。
+  const { app } = await boot();
+  const RAW = [
+    'Unable to validate email address: invalid format',
+    'Email address "abc" is invalid',
+    'Email address "a@b" is invalid: domain not found',
+    'For security purposes, you can only request this after 42 seconds',
+    'Auth session missing!',
+  ];
+  for (const raw of RAW) {
+    const friendly = app._friendly({ message: raw });
+    assert.notEqual(friendly, raw, `「${raw}」被原样显示给用户了`);
+    assert.match(friendly, /[\u4e00-\u9fa5]{4,}/, `「${raw}」翻出来不是中文：${friendly}`);
+  }
+});
+
 test('语音：浏览器不支持时说明白，不报错', async () => {
   const { app } = await boot();
   delete globalThis.SpeechRecognition;

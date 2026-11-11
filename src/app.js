@@ -413,6 +413,15 @@ class App {
       this.authError = '邮箱和密码都要填';
       return this.render();
     }
+    // 邮箱格式必须在这里挡一道。
+    // 整个应用没有 <form>，所以 type="email" 的原生校验根本不会触发（它只在表单提交时生效），
+    // 格式错的邮箱会一路发到 Supabase，回来的是英文原文
+    // （Unable to validate email address: invalid format / Email address "abc" is invalid），
+    // 爸妈对着这句话不知道是哪里写错了。先在本地判断，说清楚"@ 和 . 都要有"。
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      this.authError = '邮箱格式不对。要写成 abc@example.com 这样，别漏了 @ 和后面的 .com';
+      return this.render();
+    }
     if (this.authMode === 'signup' && password.length < 6) {
       this.authError = '密码至少 6 位';
       return this.render();
@@ -760,6 +769,14 @@ class App {
       return 'Supabase 里把注册关掉了，去 Authentication → Sign In / Providers 打开';
     }
     if (/Password should be at least|password.*(short|6 characters)/i.test(raw)) return '密码太短了，至少 6 位';
+    // 邮箱格式的兜底：本地已经挡了一道，这里防的是版本差异和别的入口
+    if (/email address .* is invalid|invalid format|email_address_invalid/i.test(raw)) {
+      return '邮箱格式不对，检查一下 @ 和后面的域名（比如 abc@example.com）';
+    }
+    if (/For security purposes.*after \d+ seconds/i.test(raw)) {
+      return '操作太频繁了，等一会儿再试（Supabase 有冷却时间）';
+    }
+    if (/Auth session missing/i.test(raw)) return '登录状态丢了，请重新登录一次';
     return raw;
   }
 
