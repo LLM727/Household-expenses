@@ -224,6 +224,38 @@ test('日常账单能自动落到二级分类', () => {
   assert.equal(parseEntry('昨天加油300', ctx).categoryFullName, '交通/车辆费用');
 });
 
+test('自己加的分类，和默认分类的关键词撞了也要能命中', () => {
+  // 默认的「在外吃饭」本来就把「奶茶」当关键词。用户又加了一个名叫「奶茶」的分类。
+  // 两边都是 2 字、都是小类 → 得分完全相同。原来的实现是「先遍历到谁就是谁」，
+  // 于是用户新建的分类永远轮不到——加进去等于白加，界面里还看不出为什么。
+  const cats = [
+    ...flattenCategories(),
+    {
+      id: 'my-milktea',
+      name: '奶茶',
+      kind: 'expense',
+      parent_id: 'food',
+      fullName: '餐饮/奶茶',
+      keywords: ['奶茶', '喜茶', '珍珠'],
+    },
+  ];
+  const mine = { ...ctx, categories: cats };
+  const hit = parseEntry('今天买奶茶18元', mine);
+  assert.equal(hit.categoryId, 'my-milktea', '自己加的分类没被用上');
+  assert.equal(hit.categoryFullName, '餐饮/奶茶');
+  // 顺带确认别的东西没被带偏
+  assert.equal(hit.amount, 18, '分类命中改了金额');
+  // 备注跟「今天买菜35.5元」→「买菜」同一个规矩：原话里除了日期、金额、分类词之外
+  // 的都留着，剩下的比抠掉分类词更多就用剩下的
+  assert.equal(hit.note, '买奶茶', '分类命中把备注吃掉了');
+
+  // 只用自己加的分类里独有的关键词，同样要能命中
+  assert.equal(parseEntry('今天买喜茶18元', mine).categoryId, 'my-milktea');
+
+  // 不撞名的默认关键词不受影响：没有自定义分类时「奶茶」仍归「在外吃饭」
+  assert.equal(parseEntry('今天买奶茶18元', ctx).categoryFullName, '餐饮/在外吃饭');
+});
+
 test('「还钱」不知道谁还谁时要提示核对，而不是默默猜', () => {
   const r = parseEntry('朋友还钱 2000', ctx);
   assert.ok(r.warnings.some((w) => w.includes('谁还谁')), r.warnings.join(' | '));

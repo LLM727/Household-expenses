@@ -366,7 +366,14 @@ export function matchCategory(text, categories, kind) {
         if (!(kw.length === 1 && inMiddleOfWord(text, idx))) {
           // 词越长越可信；同长度时小类（有 parent_id）优先
           const score = kw.length * 10 + (cat.parent_id ? 3 : 0);
-          if (!best || score > best.score) best = { cat, score, kw, idx };
+          // 完全同分时，「说的正好是分类名字」比「只是分类的关键词」更可信。
+          // 这一条是为了自己加的分类能被认出来：默认的「在外吃饭」有关键词「奶茶」，
+          // 用户又加了一个名叫「奶茶」的分类，两边同分——按原来的先来后到，
+          // 用户新建的分类永远轮不到，等于白加。
+          const isName = kw === cat.name;
+          if (!best || score > best.score || (score === best.score && isName && !best.isName)) {
+            best = { cat, score, kw, idx, isName };
+          }
           break;
         }
         from = idx + 1;
