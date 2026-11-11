@@ -518,6 +518,34 @@ test('注册：邮箱写得不像邮箱，本地就要拦住，不能发给 Supa
   }
 });
 
+test('登录页：回车等同于点登录，别的输入框不受影响', async () => {
+  // 应用里没有 <form>，浏览器不会把回车变成提交：手机键盘右下角按下去没反应。
+  const { app } = await boot();
+  app.authMode = 'signin';
+
+  let submitted = 0;
+  app.submitAuth = async () => {
+    submitted += 1;
+  };
+
+  const enter = (id) => ({ key: 'Enter', target: { id }, preventDefault() {} });
+
+  app._onRootKeydown(enter('auth-email'));
+  assert.equal(submitted, 1, '邮箱框里敲回车没提交');
+  app._onRootKeydown(enter('auth-password'));
+  assert.equal(submitted, 2, '密码框里敲回车没提交');
+  app._onRootKeydown(enter('auth-name'));
+  assert.equal(submitted, 3, '称呼框里敲回车没提交');
+  app._onRootKeydown(enter('raw-text'));
+  assert.equal(submitted, 3, '记账页的原始输入框里敲回车居然去登录了');
+  app._onRootKeydown(enter('note'));
+  assert.equal(submitted, 3, '备注框里敲回车居然去登录了');
+
+  // 非回车键不能触发
+  app._onRootKeydown({ key: 'a', target: { id: 'auth-email' }, preventDefault() {} });
+  assert.equal(submitted, 3, '按下字母键也去登录了');
+});
+
 test('报错兜底：Supabase 的英文原文不能直接显示给用户', async () => {
   // 本地校验只是第一道。版本差异、别的入口（比如重发邮件）都可能把英文原文漏上来。
   const { app } = await boot();
@@ -533,6 +561,14 @@ test('报错兜底：Supabase 的英文原文不能直接显示给用户', async
     assert.notEqual(friendly, raw, `「${raw}」被原样显示给用户了`);
     assert.match(friendly, /[\u4e00-\u9fa5]{4,}/, `「${raw}」翻出来不是中文：${friendly}`);
   }
+
+  // 没见过的错误：也要有中文说明 + 下一步，同时把原文留在末尾供排查
+  const unknown = 'some_weird_db_error_9381';
+  const wrapped = app._friendly({ message: unknown });
+  assert.notEqual(wrapped, unknown, '没见过的错误被原样显示给用户了');
+  assert.match(wrapped, /[\u4e00-\u9fa5]{4,}/, `没见过的错误没有中文说明：${wrapped}`);
+  assert.match(wrapped, /再试|发给我/, `没见过的错误没告诉用户下一步做什么：${wrapped}`);
+  assert.match(wrapped, /some_weird_db_error_9381/, '原文被吃掉了，以后没法排查');
 });
 
 test('语音：浏览器不支持时说明白，不报错', async () => {

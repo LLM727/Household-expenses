@@ -94,6 +94,7 @@ class App {
     this._onRootClick = this._onRootClick.bind(this);
     this._onRootInput = this._onRootInput.bind(this);
     this._onRootChange = this._onRootChange.bind(this);
+    this._onRootKeydown = this._onRootKeydown.bind(this);
     this._bound = false;
   }
 
@@ -119,6 +120,7 @@ class App {
     this.root.addEventListener('click', this._onRootClick);
     this.root.addEventListener('input', this._onRootInput);
     this.root.addEventListener('change', this._onRootChange);
+    this.root.addEventListener('keydown', this._onRootKeydown);
     // 手机切回前台时重新拉一次数据。一家人共用一本账，切回来看到的必须是最新的，
     // 否则会出现「我在自己手机上记了，你那边还是老数字」。顺便也会触发登录续期。
     const doc = globalThis.document;
@@ -226,6 +228,23 @@ class App {
       else if (field === 'amount') this.draft.amount = el.value === '' ? null : Number(el.value);
       else if (field === 'occurredOn') this.draft.occurredOn = el.value;
     }
+  }
+
+  /**
+   * 回车提交。
+   *
+   * 整个应用没有 <form>（按钮走 data-act 委托），所以浏览器不会把回车变成提交：
+   * 手机键盘右下角按下去没反应，电脑上打完密码习惯性敲回车也没反应。
+   * 登录/注册页就那两个输入框，回车等同于点「登录 / 注册并继续」。
+   * 别的地方不拦——记账页的备注框、原始输入框要保留回车换行的正常行为。
+   */
+  _onRootKeydown(e) {
+    if (e?.key !== 'Enter') return;
+    const el = e.target;
+    if (!el?.id) return;
+    if (el.id !== 'auth-email' && el.id !== 'auth-password' && el.id !== 'auth-name') return;
+    if (typeof e.preventDefault === 'function') e.preventDefault(); // 防止某些浏览器顺手提交/换行
+    return this.submitAuth();
   }
 
   _onRootChange(e) {
@@ -777,7 +796,12 @@ class App {
       return '操作太频繁了，等一会儿再试（Supabase 有冷却时间）';
     }
     if (/Auth session missing/i.test(raw)) return '登录状态丢了，请重新登录一次';
-    return raw;
+    // 最后一道：认不出来的错误也不能把英文原文单独甩给用户。
+    // 前面十几条盖住的是「常见的」；这里兜住的是「没见过的」——版本差异、
+    // 新的 Supabase 报错、或者数据库那边别的问题。仍然要告诉用户两件事：
+    // 出了点问题（不是你的操作错），以及下一步能做什么（再试一次 / 把这句发我）。
+    // 原文保留在末尾，是为了用户截图发过来时我能直接定位。
+    return `出了点问题，再试一次。要是一直这样，把这句话发给我：${raw}`;
   }
 
   /* ================================================================ */
