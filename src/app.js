@@ -1108,11 +1108,11 @@ class App {
       </div>
       <div class="kpi-row">
         <div class="kpi"><span>支出</span><strong class="exp">${U.money(t.expense)}</strong>
-          <em class="${cmp.expense.pct > 0 ? 'up' : 'down'}">${this.pctText(cmp.expense.pct)}</em></div>
+          <em class="${this.pctClass(cmp.expense.pct)}">${this.pctText(cmp.expense.pct)}</em></div>
         <div class="kpi"><span>收入</span><strong class="inc">${U.money(t.income)}</strong>
-          <em class="${cmp.income.pct > 0 ? 'up' : 'down'}">${this.pctText(cmp.income.pct)}</em></div>
+          <em class="${this.pctClass(cmp.income.pct)}">${this.pctText(cmp.income.pct)}</em></div>
         <div class="kpi"><span>结余</span><strong>${U.money(t.net)}</strong>
-          <em class="${cmp.net.pct > 0 ? 'up' : 'down'}">${this.pctText(cmp.net.pct)}</em></div>
+          <em class="${this.pctClass(cmp.net.pct)}">${this.pctText(cmp.net.pct)}</em></div>
       </div>
       <p class="fineprint">同比上一月（${prevMonth}）。带「不计收支」的转账、借还款已排除在合计之外。</p>
     </section>
@@ -1186,8 +1186,16 @@ class App {
   }
 
   pctText(pct) {
+    // null = 上个月没账，没有可比基数。写「上月没有」比编一个 ↑1% 诚实。
+    if (pct === null || pct === undefined) return '上月没有';
     if (!pct) return '持平';
     return `${pct > 0 ? '↑' : '↓'}${Math.abs(pct)}%`;
+  }
+
+  /** 环比的颜色：没有基数时用中性色，别让「上月没有」看起来像涨了 */
+  pctClass(pct) {
+    if (pct === null || pct === undefined || !pct) return 'flat';
+    return pct > 0 ? 'up' : 'down';
   }
 
   /* ---- 我的 ---- */

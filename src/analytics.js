@@ -249,11 +249,15 @@ export function categoryTrend(transactions, categories, months, topN = 5) {
   return { months: monthList, rows: rows.slice(0, topN) };
 }
 
-/** 环比：与上一个月对比 */export function compareWithPrev(current, previous) {
+/** 环比：与上一个月对比 */
+export function compareWithPrev(current, previous) {
   const now = totals(current);
   const prev = totals(previous);
+  // 上个月是 0 的时候，百分比在数学上不存在（除零）。
+  // 原来这里返回 1，界面就显示「支出 ↑1%」——用户第一个月记账时每一栏都写着 ↑1%，
+  // 看起来像「只涨了 1%」，实际是「上个月根本没账」。所以用 null 表示「没有可比基数」。
   const pct = (cur, old) => {
-    if (!old) return cur ? 1 : 0;
+    if (!old) return cur ? null : 0;
     return Math.round(((cur - old) / Math.abs(old)) * 1000) / 10;
   };
   return {

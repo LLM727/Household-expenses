@@ -10,7 +10,7 @@
     "check:assets": "node tools/check-assets.js",
     "check:pages": "node tools/check-pages.js",
     "check:mobile": "node tools/check-mobile.js",
-    "test:e2e": "node test/e2e/remote-store.test.mjs && node test/e2e/app-flow.test.mjs && node test/e2e/crud.test.mjs && node test/e2e/budget.test.mjs && node test/e2e/pagination.test.mjs && node test/e2e/session.test.mjs && node test/e2e/app-guards.test.mjs && node test/e2e/consistency.test.mjs",
+    "test:e2e": "node test/e2e/remote-store.test.mjs && node test/e2e/app-flow.test.mjs && node test/e2e/crud.test.mjs && node test/e2e/budget.test.mjs && node test/e2e/month-nav.test.mjs && node test/e2e/pagination.test.mjs && node test/e2e/session.test.mjs && node test/e2e/app-guards.test.mjs && node test/e2e/consistency.test.mjs",
     "serve": "node tools/serve.js"
   }
 }
