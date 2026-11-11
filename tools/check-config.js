@@ -72,10 +72,19 @@ export function judge({ settings, tables, rpc, networkError }) {
   if (tables?.status === 200) {
     const rows = Array.isArray(tables.json) ? tables.json : [];
     if (rows.length === 0) {
+      // 注意措辞：这里只能说「读不到」，不能说「行级权限生效」。
+      // RLS 打开时会过滤成空数组，可**一张新建的空表在 RLS 关闭时同样返回空数组**，
+      // 光靠读接口分不开这两种情况（要分得清就得尝试写入，而这个脚本承诺只读）。
+      // 所以给结论时留一句「顺手确认一下」，把确定性交给 pg_tables 那句 SQL。
       out.push({
         level: OK,
-        title: '数据表已建好，行级权限生效',
-        detail: '匿名请求读不到任何行——这正是我们要的',
+        title: '数据表已建好，匿名读不到任何行',
+        detail:
+          '符合预期。不过「读不到」在「权限已开」和「表还是空的」两种情况下表现一样，' +
+          '刚建好的项目本来就是空的，所以光靠这句还不能 100% 确认权限。' +
+          '上线前顺手在 SQL Editor 跑一句确认：' +
+          "select tablename, rowsecurity from pg_tables where schemaname='public' order by tablename; " +
+          '应该看到 6 行、每行 rowsecurity 都是 true。',
       });
     } else {
       out.push({

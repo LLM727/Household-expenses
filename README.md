@@ -109,12 +109,12 @@ node test/analytics.test.mjs  # 统计聚合、分类趋势、预算汇总 13 �
 node test/charts.test.mjs     # SVG 图表：扇形比例、柱高比例、金额格式、转义 15 项
 node test/accounts.test.mjs   # 账户识别与余额 8 项
 node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致 + 断网/超时提示 13 项
-node test/check.test.mjs      # 上线自检的判断逻辑 9 项
+node test/check.test.mjs      # 上线自检的判断逻辑 11 项
 node test/xlsx.test.mjs       # .xlsx 生成（独立实现的解包器 + CRC32 校验）9 项
 node test/ui.test.mjs         # 界面渲染、业务闭环、HTML 转义、标签配对、交互接线、导出、语音报错、注册校验、回车提交 28 项
 ```
 
-共 125 项，全部离线可跑，不需要真实 Supabase 项目。
+共 127 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 图表上的数字是怎么算的
 
