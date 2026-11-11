@@ -42,6 +42,32 @@ const VOICE_HINT = {
   none: '这个浏览器不支持网页语音。点输入框用键盘上的语音键，或者换 Chrome / Edge，也可以直接打字。',
 };
 
+/**
+ * 语音出错的提示语。
+ *
+ * 原来只有 not-allowed 翻译了，其余一律 `语音识别出错：${ev.error}` ——
+ * 用户看到的是「语音识别出错：no-speech」这种。no-speech 恰恰是最常见的那个
+ * （点了麦克风却没说话、说晚了、声音太小），而记账本的常用人是爸妈和孩子，
+ * 对着一个英文错误码没有任何用。这里逐条翻成人话，并给出下一步能做什么。
+ */
+const VOICE_ERROR = {
+  'no-speech': '没听到声音。再点一次麦克风，说完停一下等它识别',
+  'audio-capture': '没找到麦克风，检查一下设备，或者直接打字',
+  aborted: '语音输入被取消了，要点麦克风重新开始',
+  network: '语音识别要联网，检查一下网络再试',
+  'not-allowed': '麦克风被拒绝了，请在浏览器里允许',
+  'service-not-allowed': '这个浏览器禁用了网页语音，用键盘上的 🎤 键，或者直接打字',
+  'language-not-supported': '这个浏览器不支持中文语音，用键盘上的 🎤 键，或者直接打字',
+  'bad-grammar': '语音识别没听懂，再说一次试试',
+};
+
+/** 未知错误码也别把英文原样丢给用户，但保留错误码方便找我排查 */
+function voiceErrorText(code) {
+  const known = VOICE_ERROR[code];
+  if (known) return known;
+  return `语音识别出了点问题（${code || '未知原因'}），可以改用键盘上的 🎤 键，或者直接打字`;
+}
+
 /* ------------------------------------------------------------------ */
 
 class App {
@@ -555,7 +581,7 @@ class App {
       };
       rec.onerror = (ev) => {
         this.listenState = null;
-        this.showToast(ev.error === 'not-allowed' ? '麦克风被拒绝了，请在浏览器里允许' : `语音识别出错：${ev.error}`);
+        this.showToast(voiceErrorText(ev.error));
         this.render();
       };
       rec.onend = () => {

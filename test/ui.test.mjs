@@ -533,6 +533,62 @@ test('语音：麦克风被拒绝时说人话，并复位状态', async () => {
   delete globalThis.SpeechRecognition;
 });
 
+test('语音：每一种出错都得说人话，不能把英文错误码丢给用户', async () => {
+  // 原来只有 not-allowed 翻译了，其余一律「语音识别出错：${ev.error}」。
+  // 而 no-speech 恰恰是最常见的那个（点了麦克风没说话 / 说晚了 / 声音太小），
+  // 记账本的常用人是爸妈和孩子，对着一个英文错误码没有用。
+  const { app } = await boot();
+
+  class FakeSR {
+    constructor() {
+      FakeSR.last = this;
+    }
+
+    start() {
+      this.onstart?.();
+    }
+  }
+  globalThis.SpeechRecognition = FakeSR;
+
+  // 期望里至少要有的关键词：说明「出了什么事」或「下一步做什么」
+  const CASES = [
+    ['no-speech', /没听到|再说|重新/],
+    ['aborted', /取消/],
+    ['audio-capture', /麦克风/],
+    ['network', /网络|联网/],
+    ['not-allowed', /麦克风/],
+    ['service-not-allowed', /浏览器|打字|键盘/],
+    ['language-not-supported', /中文|打字|键盘/],
+    ['bad-grammar', /没听懂|再说/],
+  ];
+
+  for (const [code, expect] of CASES) {
+    app.listenState = null;
+    app.startVoice();
+    FakeSR.last.onerror({ error: code });
+
+    assert.ok(
+      !app.toastMsg.includes('语音识别出错：'),
+      `${code} 还在把英文错误码直接甩给用户：「${app.toastMsg}」`,
+    );
+    assert.ok(
+      /[\u4e00-\u9fa5]{4,}/.test(app.toastMsg),
+      `${code} 的提示不是一句中文：「${app.toastMsg}」`,
+    );
+    assert.match(app.toastMsg, expect, `${code} 的提示没说清怎么办：「${app.toastMsg}」`);
+    assert.equal(app.listenState, null, `${code} 出错后状态没复位`);
+  }
+
+  // 没见过的错误码：也要说人话，但保留错误码方便找我排查
+  app.listenState = null;
+  app.startVoice();
+  FakeSR.last.onerror({ error: 'some-new-code' });
+  assert.match(app.toastMsg, /[\u4e00-\u9fa5]{4,}/, `未知错误码没有中文提示：「${app.toastMsg}」`);
+  assert.match(app.toastMsg, /some-new-code/, '未知错误码没保留，以后没法排查');
+
+  delete globalThis.SpeechRecognition;
+});
+
 /* ---------- 语音输入的设备差异：给出的建议必须能照做 ---------- */
 
 const UA_IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';

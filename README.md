@@ -111,10 +111,10 @@ node test/accounts.test.mjs   # 账户识别与余额 8 项
 node test/remote.test.mjs     # Supabase 请求构造 + 列名与 schema 一致 + 断网/超时提示 13 项
 node test/check.test.mjs      # 上线自检的判断逻辑 9 项
 node test/xlsx.test.mjs       # .xlsx 生成（独立实现的解包器 + CRC32 校验）9 项
-node test/ui.test.mjs         # 界面渲染、业务闭环、HTML 转义、标签配对、交互接线、导出、语音 24 项
+node test/ui.test.mjs         # 界面渲染、业务闭环、HTML 转义、标签配对、交互接线、导出、语音报错 25 项
 ```
 
-共 121 项，全部离线可跑，不需要真实 Supabase 项目。
+共 122 项，全部离线可跑，不需要真实 Supabase 项目。
 
 ## 图表上的数字是怎么算的
 
