@@ -74,7 +74,7 @@ async function seedMonth(app, store) {
   const base = (day) => `${month}-${String(day).padStart(2, '0')}`;
 
   const rows = [
-    { kind: 'expense', amount: 35.5, category_id: cat('买菜').id, occurred_on: base(3), member_id: me, note: '买菜' },
+    { kind: 'expense', amount: 35.5, category_id: cat('买菜').id, occurred_on: base(3), member_id: me, note: '买菜', account_id: acc('微信').id },
     { kind: 'expense', amount: 200, category_id: cat('水电燃气').id, occurred_on: base(5), member_id: me, note: '水费' },
     // 垫付：算支出，但标记可报销
     { kind: 'expense', amount: 100, category_id: cat('打车').id, occurred_on: base(7), member_id: me, reimbursable: true },
@@ -287,3 +287,119 @@ test('预算超支：设了预算且超了，统计页要明确说出来', async
   assert.ok(root.has('已超支'), '超支了却没在统计页上提示');
   assert.ok(root.has('买菜'), '提示里没说是哪个分类超了');
 });
+
+/* ------------------------------------------------------------------ */
+/* 两组「只在真实路径上才会暴露」的一致性：                                 */
+/*   1. 说了付款方式 vs 没说 —— 合计必须一样（账户只是备注，不影响口径）      */
+/*   2. 补录跨年的账 —— 归属年份必须一致地落到去年，且不出现在今年           */
+/* ------------------------------------------------------------------ */
+
+/** 从统计页上抠出「收入 12000」这样的数字 */
+function amountNear(text, label) {
+  const m = new RegExp(`${label}[^0-9]{0,6}([0-9][0-9,]*\\.?[0-9]*)`).exec(text);
+  return m ? Number(m[1].replace(/,/g, '')) : null;
+}
+test('说了「微信」和没说，合计必须一模一样（账户只记渠道，不改口径）', async () => {
+  const { app, root } = await bootFamily('paymethod@test.com');
+  const month = app.month;
+
+  // 走真实路径：敲句子 → 识别 → 保存。日期交给「今天」这类口语，不自己拼日期，
+  // 免得测试假设了 app 默认月份跟真实时钟一致（跨月零点跑就会假红）。
+  const addByText = async (sentence) => {
+    root.fill('#raw-text', sentence);
+    await app.doParse(sentence);
+    assert.ok(app.draft, `「${sentence}」没识别出草稿：${app.toastMsg}`);
+    await app.saveDraft();
+    await app.refreshData();
+  };
+
+  await addByText('今天买菜35.5元');
+  const first = await expectedTotals(app.store, month);
+  assert.equal(first.rows.length, 1, '第一笔没存进去');
+  // 绝对值也要钉住：只比「差 50」的话，账户带来的固定偏差会被两次相减抵消掉
+  assert.equal(first.totals.expense, 35.5, `第一笔合计应该是 35.5，实际 ${first.totals.expense}`);
+
+  await addByText('今天话费50元 微信');
+  const second = await expectedTotals(app.store, month);
+  assert.equal(second.totals.expense, 85.5, `加了一笔 50 应该到 85.5，实际 ${second.totals.expense}`);
+  // 带账户的那笔确实记下了账户（否则这个测试就变成「两个都没账户」，白测）
+  const wechatRow = second.rows.find((t) => (t.raw_input || '').includes('微信'));
+  assert.ok(wechatRow?.account_id, '「微信」没被记成账户——那这个测试就没在测账户的影响');
+
+  await addByText('今天话费50元');
+  const third = await expectedTotals(app.store, month);
+  assert.equal(third.totals.expense, 135.5, `再加一笔 50 应该到 135.5，实际 ${third.totals.expense}`);
+  const plainRow = third.rows.find((t) => (t.raw_input || '') === '今天话费50元');
+  assert.ok(plainRow, '没加付款方式的那笔不在账上');
+  assert.equal(plainRow.account_id, null, '没说付款方式，不该凭空记一个账户');
+
+  assert.equal(second.rows.length, 2, `第二笔没存进去（${second.rows.length} 笔）`);
+  assert.equal(third.rows.length, 3, `第三笔没存进去（${third.rows.length} 笔）`);
+
+  // 加了「微信」的那笔和没加的那笔，金额与分类必须一致
+  const fees = third.rows.filter((t) => (t.raw_input || '').includes('话费'));
+  assert.equal(fees.length, 2, `应该有两笔话费，实际 ${fees.length} 笔`);
+  assert.equal(fees[0].amount, fees[1].amount, '「微信」两个字改了金额');
+  assert.equal(fees[0].category_id, fees[1].category_id, '「微信」两个字改了分类');
+
+  assert.equal(
+    Math.round((third.totals.expense - second.totals.expense) * 100) / 100,
+    50,
+    '多说一句付款方式，合计就变了——这是家人最先注意到的「数字对不上」',
+  );
+  assert.equal(
+    Math.round((second.totals.expense - first.totals.expense) * 100) / 100,
+    50,
+    '「微信」两个字让合计多涨了——账户只是记录渠道，不该影响金额',
+  );
+
+  // 页面上显示的数字也要跟账上一致（统计页的合计用 money() 格式化）
+  app.month = month;
+  app.tab = 'stats';
+  app.render();
+  assert.ok(
+    root.has(money(third.totals.expense)),
+    `统计页没显示账上的支出合计 ${money(third.totals.expense)}；页面上是：${root.innerHTML.slice(0, 400)}`,
+  );
+  assert.ok(
+    !root.has(money(third.totals.expense + 50)),
+    '统计页多算了 50——像是把带「微信」的那笔算了两次',
+  );
+});
+
+test('补录去年的账：归到去年，不能混进今年的合计', async () => {
+  const { app, root, store } = await bootFamily('backdate@test.com');
+  const month = app.month;
+  const year = Number(month.slice(0, 4));
+  const mm = month.slice(5);
+
+  const addByText = async (sentence) => {
+    root.fill('#raw-text', sentence);
+    await app.doParse(sentence);
+    assert.ok(app.draft, `「${sentence}」没识别出草稿：${app.toastMsg}`);
+    await app.saveDraft();
+    await app.refreshData();
+  };
+
+  // 今年本月一笔
+  await addByText('今天买菜100元');
+  // 去年同一个月一笔（补录）
+  await addByText(`${year - 1}年${Number(mm)}月10日 买年货800元`);
+
+  const thisMonth = await expectedTotals(store, month);
+  const lastYearMonth = `${year - 1}-${mm}`;
+
+  assert.equal(thisMonth.rows.length, 1, `今年本月应该只有 1 笔，实际 ${thisMonth.rows.length} 笔`);
+  assert.equal(thisMonth.totals.expense, 100, `今年本月支出应该是 100，实际 ${thisMonth.totals.expense}`);
+  assert.equal(
+    thisMonth.rows.filter((t) => String(t.occurred_on).startsWith(String(year - 1))).length,
+    0,
+    '去年的账混进了今年',
+  );
+
+  const lastYear = await store.fetchTransactions(`${lastYearMonth}-01`, monthEnd(lastYearMonth));
+  const backdated = lastYear.filter((t) => String(t.occurred_on).slice(0, 7) === lastYearMonth);
+  assert.equal(backdated.length, 1, `补录的那笔不在 ${lastYearMonth} 里`);
+  assert.equal(Number(backdated[0].amount), 800, '补录的金额不对');
+});
+

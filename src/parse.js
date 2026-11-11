@@ -470,7 +470,13 @@ function buildNote(text, spans) {
   let rest = maskSpans(text, spans.filter(Boolean));
   for (const re of NOTE_FILLERS) rest = rest.replace(re, ' ');
   rest = rest.replace(/\s+/g, ' ').trim();
+  // 句首的语气/介词、数量词（「个」「两斤」「三箱」），以及「买了」被抠掉后
+  // 孤零零剩下的量词。「买了个包」剩「个包」→「包」；「买了两斤苹果」→「苹果」。
   rest = rest.replace(/^(了|的|在|于|给|把|和|跟)+\s*/g, '').trim();
+  rest = rest.replace(
+    /^(?:[一二两三四五六七八九十百千万几]|半)?(?:个|件|只|条|双|袋|箱|瓶|盒|包|斤|公斤|克|两|份|张|台|辆|本|支|块|毛|分|套|把|顶|副|颗|粒|桶|罐)+/g,
+    '',
+  ).trim();
   rest = rest.replace(/\s*(了|的)$/g, '').trim();
   // 关键词抠完剩下的单字基本都是噪声：「交电费」剩「交」、「充话费」剩「充」、
   // 「买衣服」剩「买」。与其在流水里显示一个孤零零的字，不如留空。
@@ -523,12 +529,18 @@ export function parseEntry(raw, ctx = {}) {
   const isSpecial = !KIND_MAP[kind]?.counted;
   const catHit = isSpecial ? null : matchCategory(maskSpans(text, dateSpans), categories, kind);
 
-  // 单字的分类关键词（比如「买」「饭」）只用来判类别，不要从备注里抠掉：
-  // 一抠就把词切碎了——「午饭 25」的备注变成「午」，「买菜 35.5」变成「菜」。
+  // 分类关键词抠不抠掉，取决于抠完还剩不剩东西。
+  // 「午饭 25」的备注本来就该是「午饭」，抠掉「午饭」就什么都不剩；
+  // 「超市 158 微信」抠掉「超市」也一样。而「给小明买书45」抠掉「买书」还剩
+  // 「小明」，是有用信息，该保留。
+  // 所以这里先两种都算一遍，谁留下更多字用谁——不再按关键词长度一刀切。
   const catSpan = catHit && (catHit.source || '').length > 1 ? catHit.span : null;
-  const spans = [dateHit?.span, amountHit?.span, memberHit?.span, kindHit?.span, catSpan,
+  const baseSpans = [dateHit?.span, amountHit?.span, memberHit?.span, kindHit?.span,
     ...(accHit?.spans || [])];
-  const note = buildNote(text, spans);
+  const noteWithCat = buildNote(text, catSpan ? [...baseSpans, catSpan] : baseSpans);
+  const noteWithoutCat = catSpan ? buildNote(text, baseSpans) : noteWithCat;
+  // 两者一样长时（比如抠掉的是重复出现的词）用抠掉分类的那个，避免备注里留着分类名
+  const note = noteWithoutCat.length > noteWithCat.length ? noteWithoutCat : noteWithCat;
 
   // 「报销」既可能是垫付待报销（支出），也可能是报销回款（抵支出）。
   // 只有前者才标记「可报销」；已经是 reimburse_back 的就别再标一遍。

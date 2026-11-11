@@ -187,12 +187,33 @@ test('上月8号 / 上上个月5号：补录到正确的月份', () => {
   assert.equal(parseEntry('上月31号交电费200', dec).occurredOn, '2026-11-30');
 });
 
-test('备注不会只剩半个词', () => {
-  assert.equal(parseEntry('交电费200', ctx).note, '');
-  assert.equal(parseEntry('给孩子买衣服 260', ctx).note, '');
+test('备注保留用户说的那样东西，不因为「正好是个分类词」就丢掉', () => {
+  // 原来这几条断言的是空字符串：分类关键词命中了就从备注里抠掉。
+  // 结果是一整句话说完，流水页上只剩「2026-11-11 200.00元」——
+  // 用户明明说了「交电费」，却看不出这笔是什么。分类已经单独有一栏了，
+  // 备注该保留原话。
+  assert.equal(parseEntry('交电费200', ctx).note, '交电费');
+  assert.equal(parseEntry('今天买菜35.5元', ctx).note, '买菜');
+  assert.equal(parseEntry('今天话费50元', ctx).note, '话费');
+  // 「孩子」是成员别名，会被认成成员并从备注里摘掉——这里摘对了
+  assert.equal(parseEntry('给孩子买衣服 260', ctx).note, '买衣服');
+  assert.equal(parseEntry('给孩子买衣服 260', ctx).memberName, '小明');
   const withAcc = { ...ctx, accounts: DEFAULT_ACCOUNTS }; // 带账户配置时「微信」会被当作支付方式摘掉
   assert.equal(parseEntry('午饭 25 微信', withAcc).note, '午饭');
-  assert.equal(parseEntry('给小明买书 45', ctx).note, '买书');
+});
+
+test('付款方式不算备注，但说了也不影响其他字段', () => {
+  // DEFAULT_ACCOUNTS 没有 id，这里补上，模拟从数据库读回来的账户
+  const accounts = DEFAULT_ACCOUNTS.map((a, i) => ({ ...a, id: `acc-${i}` }));
+  const withAcc = { ...ctx, accounts };
+  const withWechat = parseEntry('今天买菜35.5元 微信', withAcc);
+  const without = parseEntry('今天买菜35.5元', withAcc);
+  assert.equal(withWechat.note, '买菜', '「微信」不该进备注');
+  assert.equal(withWechat.fromAccountId, 'acc-1', '「微信」该被认成付款账户');
+  assert.equal(without.fromAccountId, null, '没说付款方式就不该有账户');
+  assert.equal(withWechat.amount, without.amount, '付款方式改了金额');
+  assert.equal(withWechat.categoryId, without.categoryId, '付款方式改了分类');
+  assert.equal(withWechat.kind, without.kind, '付款方式改了收支类型');
 });
 
 test('日常账单能自动落到二级分类', () => {
