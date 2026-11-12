@@ -2,6 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { judge } from '../tools/check-config.js';
 
 const okSettings = { status: 200, json: { mailer_autoconfirm: true, disable_signup: false } };
@@ -126,3 +127,56 @@ test('真读到数据时，必须明确说「没生效、先别上线」', () =>
   assert.match(bad.detail, /schema\.sql/, '没告诉用户怎么办');
 });
 
+
+// 自检脚本自己也会写错。这里比对 schema.sql 和 check-config.js 里的参数名：
+// PostgREST 按参数名匹配函数，名字错一个字母，返回的就是 PGRST202
+//「Could not find the function」——看起来像「函数没建」，实则自检传错了参数，
+// 结果会让用户白白重跑一遍 schema.sql。曾经真实发生过：这里写成 p_name，
+// schema 里是 p_family_name。
+test('自检调用 create_family 的参数名，必须和 schema.sql 里的完全一致', () => {
+  const schema = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+  const checker = readFileSync(new URL('../tools/check-config.js', import.meta.url), 'utf8');
+
+  const sig = schema.match(/function\s+public\.create_family\s*\(([\s\S]*?)\)\s*returns/i);
+  assert.ok(sig, 'schema.sql 里没找到 create_family 函数');
+  const schemaParams = sig[1]
+    .split(',')
+    .map((s) => s.trim().split(/\s+/)[0])
+    .filter(Boolean);
+  assert.ok(schemaParams.length >= 2, `create_family 参数解析异常：${schemaParams}`);
+
+  const body = checker.match(/rpc\/create_family[\s\S]{0,400}?JSON\.stringify\(\{([\s\S]*?)\}\)/);
+  assert.ok(body, 'check-config.js 里没找到 create_family 的调用体');
+  const sentParams = [...body[1].matchAll(/(\w+)\s*:/g)].map((m) => m[1]);
+  assert.ok(sentParams.length >= 2, `check-config 参数解析异常：${sentParams}`);
+
+  for (const p of sentParams) {
+    assert.ok(
+      schemaParams.includes(p),
+      `自检传了 schema 里不存在的参数「${p}」。schema 要求：${schemaParams.join(', ')}`,
+    );
+  }
+});
+
+test('应用本身调用 create_family 的参数名，也要和 schema.sql 一致', () => {
+  const schema = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+  const store = readFileSync(new URL('../src/store.js', import.meta.url), 'utf8');
+
+  const sig = schema.match(/function\s+public\.create_family\s*\(([\s\S]*?)\)\s*returns/i);
+  assert.ok(sig, 'schema.sql 里没找到 create_family 函数');
+  const schemaParams = sig[1]
+    .split(',')
+    .map((s) => s.trim().split(/\s+/)[0])
+    .filter(Boolean);
+
+  const call = store.match(/rpc\('create_family',\s*\{([\s\S]*?)\}\)/);
+  assert.ok(call, 'store.js 里没找到 create_family 调用');
+  const sentParams = [...call[1].matchAll(/(\w+)\s*:\s*(?![\s\S]*\})/g)].map((m) => m[1]);
+
+  for (const p of sentParams) {
+    assert.ok(
+      schemaParams.includes(p),
+      `应用传了 schema 里不存在的参数「${p}」。schema 要求：${schemaParams.join(', ')}`,
+    );
+  }
+});

@@ -185,7 +185,11 @@ async function main() {
     rpc = await req(`${url}/rest/v1/rpc/create_family`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ p_name: 'x', p_display_name: 'x', p_role: 'father' }),
+      // 参数名必须和 schema.sql 里 create_family(p_family_name, p_display_name, p_role)
+      // 完全一致。PostgREST 是按参数名匹配函数的，写错一个名字它就找不到函数，
+      // 返回 PGRST202「Could not find the function」——看起来像「函数没建」，
+      // 其实是自检自己传错了参数。曾经这里写成 p_name，害得用户白重跑一遍 schema。
+      body: JSON.stringify({ p_family_name: 'x', p_display_name: 'x', p_role: 'father' }),
     });
   } catch (err) {
     networkError = err?.name === 'AbortError' ? '请求超时' : (err?.message || String(err));

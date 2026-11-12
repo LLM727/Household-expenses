@@ -15,8 +15,8 @@
 
 export const CONFIG = {
   appName: '家庭记账本',
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://oudgaknlflikdknoligd.supabase.co',
+  supabaseAnonKey: 'sb_publishable_r61nqbDgoLE627u44qQfQQ_QKy-wIzn',
   /** 默认货币符号 */
   currency: '¥',
   /** 提醒阈值：预算使用率达到多少算「快超支」 */
